@@ -137,11 +137,9 @@ struct MeetingNote: Codable, Identifiable, Equatable {
 /// dictations sharing a timestamp-derived id essentially can't.
 final class MeetingNoteStore {
     private(set) var notes: [MeetingNote] = []
-    /// Meeting transcripts are far larger than a single dictation, so this
-    /// stays well short of `PipelineStatsStore`'s 180 days — closer to
-    /// `HistoryStore`'s own 30, a little more generous since a meeting
-    /// someone wants to search back through has a longer natural shelf
-    /// life than a quick dictation.
+    /// More generous than `HistoryStore`'s own 30 days: a meeting someone
+    /// wants to search back through has a longer natural shelf life than a
+    /// quick dictation.
     private let retentionDays = 90
     private var fileURL: URL {
         AppPaths.supportDirectory.appendingPathComponent("meeting_notes.json")

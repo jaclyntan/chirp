@@ -132,8 +132,20 @@ final class AudioRecorder {
         // at 48kHz for playback but drop to 24kHz the instant the mic is
         // engaged, so a format read a moment earlier is stale by the time
         // the tap installs: exception, process aborted.
+        let tapInstalledAt = Date()
+        var loggedFirstBuffer = false
         input.installTap(onBus: 0, bufferSize: 4096, format: nil) { [weak self] buffer, _ in
             guard let self else { return }
+            // The gap between asking for audio and actually receiving any
+            // is dead time: speech in that window is simply never
+            // captured, and it's what makes both the first word and the
+            // live preview feel late. Logged once per recording so the
+            // cost is measurable rather than assumed.
+            if !loggedFirstBuffer {
+                loggedFirstBuffer = true
+                dictationLog.info(
+                    "start: first buffer after \(Date().timeIntervalSince(tapInstalledAt) * 1000, format: .fixed(precision: 0))ms")
+            }
             // The file is created from the FIRST buffer's real format rather
             // than the format read above, for the same reason. When those
             // disagreed, every write threw, `try?` swallowed it, and the

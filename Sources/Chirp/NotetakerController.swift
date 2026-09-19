@@ -85,11 +85,6 @@ final class NotetakerController: ObservableObject {
     /// can't transcribe anything until this is wired up.
     var transcribeFile: ((URL) async throws -> String)?
     var rewriteEngine: RewriteEngine?
-    /// Set by `AppDelegate` to its own `pipelineStats.record(...)` — lets a
-    /// meeting's Harper/dictionary fix counts feed Insights' "Fixes made by
-    /// Chirp" card the same way every normal dictation's do, instead of
-    /// vanishing the moment `MeetingTranscriber` finishes with them.
-    var recordPipelineStats: ((_ harperFixes: Int, _ dictionaryFixes: Int, _ snippetExpansions: Int) -> Void)?
     /// Set by `AppDelegate` to exclude/include its main window from screen
     /// recording (`NSWindow.sharingType`) — toggled around a capture when
     /// `Settings.notetakerHideFromScreenCapture` is on. `NotetakerController`
@@ -268,23 +263,22 @@ final class NotetakerController: ObservableObject {
                 return
             }
 
-            let transcription = await transcriber.transcribe(
+            let segments = await transcriber.transcribe(
                 micURL: micURL, systemAudioURL: systemURL,
                 knownSpeakers: knownSpeakers.speakers,
                 attendeeHint: attendeeHint,
                 transcribeFile: transcribeFile)
-            guard !transcription.segments.isEmpty else {
+            guard !segments.isEmpty else {
                 lastError = "Didn't catch any speech in that meeting — nothing was saved."
                 state = .idle
                 return
             }
-            recordPipelineStats?(transcription.harperFixes, transcription.dictionaryFixes, 0)
 
             var note = MeetingNote(
                 title: calendarTitle ?? serviceName ?? capturedApp?.displayName ?? "Meeting",
                 date: startedAt, duration: Date().timeIntervalSince(startedAt),
                 appBundleID: capturedApp?.rawValue, calendarTitle: calendarTitle,
-                segments: transcription.segments)
+                segments: segments)
 
             if let rewriteEngine,
                let result = await MeetingSummarizer.summarize(note, engine: rewriteEngine) {

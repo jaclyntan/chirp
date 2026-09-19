@@ -46,7 +46,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Obse
     private let petPanel = PetPanelController()
     private let recorder = AudioRecorder()
     private let history = HistoryStore()
-    let pipelineStats = PipelineStatsStore()
     let notetaker = NotetakerController()
     private lazy var notetakerHotkeyMonitor = ConsumingHotkeyMonitor {
         (Settings.notetakerHotkeyKeyCode, Settings.notetakerHotkeyModifiers)
@@ -170,10 +169,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Obse
             try await self?.recognize(fileAt: url, bundleID: nil) ?? ""
         }
         notetaker.rewriteEngine = rewriteEngine
-        notetaker.recordPipelineStats = { [weak self] harper, dictionary, snippets in
-            self?.pipelineStats.record(
-                harperFixes: harper, dictionaryFixes: dictionary, snippetExpansions: snippets)
-        }
         notetaker.setWindowExcludedFromCapture = { [weak self] excluded in
             self?.window?.sharingType = excluded ? .none : .readOnly
         }
@@ -655,7 +650,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Obse
             return
         }
 
-        Task { [history, rewriteEngine, pipelineStats] in
+        Task { [history, rewriteEngine] in
             defer { try? FileManager.default.removeItem(at: url) }
             // A second, sharper opinion on top of the RMS-based `hasSignal`
             // gate just above — catches what raw amplitude can't, like a
@@ -719,9 +714,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Obse
                 // each count comes from a plain before/after read of
                 // `formatted` around a call already made below, never from
                 // changing what that call does or re-deriving its result.
-                var harperFixCount = 0
-                var dictionaryFixCount = 0
-                var snippetExpansionCount = 0
 
                 var formatted: String
                 if style.skipsAllProcessing {
@@ -729,28 +721,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Obse
                     // code editors, where "corrections" would be corruption.
                     formatted = raw.trimmingCharacters(in: .whitespacesAndNewlines)
                     if isEnglishDictation {
-                        let beforeDictionary = formatted
                         formatted = LearnedStore.apply(
                             in: formatted, includeDeveloperVocabulary: developerVocabulary)
-                        dictionaryFixCount += PipelineDiff.wordChangeCount(
-                            from: beforeDictionary, to: formatted)
                     }
-                    snippetExpansionCount += PipelineDiff.snippetMatchCount(
-                        in: formatted, snippets: SnippetStore.load())
                     formatted = SnippetStore.expand(in: formatted)
                 } else {
                     formatted = TextFormatter(
                         dictionary: isEnglishDictation ? TextFormatter.loadDictionary() : [:]
                     ).format(raw)
                     if isEnglishDictation {
-                        let beforeDictionary = formatted
                         formatted = LearnedStore.apply(
                             in: formatted, includeDeveloperVocabulary: developerVocabulary)
-                        dictionaryFixCount += PipelineDiff.wordChangeCount(
-                            from: beforeDictionary, to: formatted)
                     }
-                    snippetExpansionCount += PipelineDiff.snippetMatchCount(
-                        in: formatted, snippets: SnippetStore.load())
                     formatted = SnippetStore.expand(in: formatted)
 
                     // Everything below needs the model, and the spoken
@@ -784,20 +766,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Obse
                     // "corrects" other languages' real words into the
                     // nearest English one instead of leaving them alone.
                     if !formatted.isEmpty, isEnglishDictation {
-                        let beforeHarper = formatted
                         formatted = HarperChecker.fix(
                             formatted,
                             vocabulary: LearnedStore.biasTerms(
                                 includeDeveloperVocabulary: developerVocabulary))
-                        harperFixCount += PipelineDiff.wordChangeCount(from: beforeHarper, to: formatted)
                     }
                 }
                 dictationLog.info("pipeline done: \(formatted.count) chars")
                 if !formatted.isEmpty {
                     history.add(formatted, duration: duration, targetBundleID: targetBundleID)
-                    pipelineStats.record(
-                        harperFixes: harperFixCount, dictionaryFixes: dictionaryFixCount,
-                        snippetExpansions: snippetExpansionCount)
                     entries = history.entries
                     dictationLog.info("history: added, inserting text")
                     if AXIsProcessTrusted() {

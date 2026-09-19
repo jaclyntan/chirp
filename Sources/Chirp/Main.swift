@@ -257,10 +257,15 @@ struct ChirpMain {
         }
         let preview = LivePreviewTranscriber()
         var lastPrinted = ""
+        let started = Date()
+        var firstTextAt: TimeInterval?
         preview.onUpdate = { text in
             guard text != lastPrinted else { return }
+            if firstTextAt == nil, !text.isEmpty {
+                firstTextAt = Date().timeIntervalSince(started)
+                print(String(format: "first text after %.2fs", firstTextAt!))
+            }
             lastPrinted = text
-            print("partial: \(text)")
         }
         preview.start()
 
@@ -273,14 +278,19 @@ struct ChirpMain {
             do { try file.read(into: buffer, frameCount: frames) } catch { break }
             if buffer.frameLength == 0 { break }
             preview.enqueue(buffer)
-            // Let the drain task actually run between buffers.
-            try? await Task.sleep(nanoseconds: 5_000_000)
+            // Paced at the buffer's own real duration, so "first text
+            // after Ns" means N seconds of *speech* — the number the user
+            // actually experiences. Feeding as fast as the file reads
+            // measures nothing but disk speed.
+            let seconds = Double(buffer.frameLength) / file.processingFormat.sampleRate
+            try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
         }
         // Give the queue time to finish decoding what's left.
         for _ in 0..<200 {
             try? await Task.sleep(nanoseconds: 50_000_000)
         }
         print("final partial: \(lastPrinted.isEmpty ? "<empty>" : lastPrinted)")
+        print(String(format: "total %.2fs", Date().timeIntervalSince(started)))
         exit(0)
     }
 

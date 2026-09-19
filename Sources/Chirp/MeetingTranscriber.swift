@@ -43,16 +43,6 @@ final class MeetingTranscriber {
         }
     }
 
-    /// `segments` plus how many words the correction pass below actually
-    /// changed, purely so `NotetakerController` can feed the same
-    /// "Fixes made by Chirp" tally in Insights that normal dictation does
-    /// — meeting transcripts weren't contributing to it at all before.
-    struct TranscriptionResult {
-        var segments: [MeetingSegment]
-        var harperFixes = 0
-        var dictionaryFixes = 0
-    }
-
     /// - Parameters:
     ///   - micURL: the user's own voice, from `AudioRecorder.stop()`. Nil
     ///     if the mic recorder was never started (shouldn't normally
@@ -75,19 +65,15 @@ final class MeetingTranscriber {
     func transcribe(
         micURL: URL?, systemAudioURL: URL?, knownSpeakers: [KnownSpeaker], attendeeHint: String?,
         transcribeFile: (URL) async throws -> String
-    ) async -> TranscriptionResult {
+    ) async -> [MeetingSegment] {
         var segments: [MeetingSegment] = []
-        var totalHarperFixes = 0
-        var totalDictionaryFixes = 0
 
         if let micURL {
             if let raw = try? await transcribeFile(micURL), !raw.isEmpty {
                 let corrected = Self.applyCorrections(to: raw)
-                totalHarperFixes += corrected.harperFixes
-                totalDictionaryFixes += corrected.dictionaryFixes
                 let duration = Self.duration(of: micURL)
                 segments.append(MeetingSegment(
-                    speakerIndex: 0, speakerName: "You", text: corrected.text,
+                    speakerIndex: 0, speakerName: "You", text: corrected,
                     startTime: 0, endTime: duration))
             }
         }
@@ -122,8 +108,6 @@ final class MeetingTranscriber {
 
                     guard let raw = try? await transcribeFile(clipURL), !raw.isEmpty else { continue }
                     let corrected = Self.applyCorrections(to: raw)
-                    totalHarperFixes += corrected.harperFixes
-                    totalDictionaryFixes += corrected.dictionaryFixes
 
                     // A recognized known speaker's own diarized id *is*
                     // their enrolled name (see `initializeKnownSpeakers`
@@ -138,7 +122,7 @@ final class MeetingTranscriber {
                     }
 
                     segments.append(MeetingSegment(
-                        speakerIndex: index, speakerName: name, text: corrected.text,
+                        speakerIndex: index, speakerName: name, text: corrected,
                         startTime: Double(speakerSegment.startTimeSeconds),
                         endTime: Double(speakerSegment.endTimeSeconds),
                         embedding: speakerSegment.embedding))
@@ -146,9 +130,7 @@ final class MeetingTranscriber {
             }
         }
 
-        return TranscriptionResult(
-            segments: segments.sorted { $0.startTime < $1.startTime },
-            harperFixes: totalHarperFixes, dictionaryFixes: totalDictionaryFixes)
+        return segments.sorted { $0.startTime < $1.startTime }
     }
 
     /// The same English-only dictionary + grammar corrections every normal
@@ -163,21 +145,14 @@ final class MeetingTranscriber {
     /// Developer vocabulary is left out too — it exists to bias code/API
     /// terms while dictating into an editor, which doesn't apply to
     /// meeting audio.
-    private static func applyCorrections(to text: String) -> (text: String, harperFixes: Int, dictionaryFixes: Int) {
+    private static func applyCorrections(to text: String) -> String {
         guard String(Settings.localeIdentifier.prefix(while: { $0 != "-" })).lowercased() == "en"
-        else { return (text, 0, 0) }
+        else { return text }
 
-        var corrected = text
-        let beforeDictionary = corrected
-        corrected = LearnedStore.apply(in: corrected, includeDeveloperVocabulary: false)
-        let dictionaryFixes = PipelineDiff.wordChangeCount(from: beforeDictionary, to: corrected)
-
-        let beforeHarper = corrected
+        var corrected = LearnedStore.apply(in: text, includeDeveloperVocabulary: false)
         corrected = HarperChecker.fix(
             corrected, vocabulary: LearnedStore.biasTerms(includeDeveloperVocabulary: false))
-        let harperFixes = PipelineDiff.wordChangeCount(from: beforeHarper, to: corrected)
-
-        return (corrected, harperFixes, dictionaryFixes)
+        return corrected
     }
 
     private static func duration(of url: URL) -> TimeInterval {
