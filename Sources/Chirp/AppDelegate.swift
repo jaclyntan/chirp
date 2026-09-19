@@ -130,7 +130,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Obse
         // docs/removed-engines.md for why this (and FluidAudio generally)
         // stays even with only the Apple engine selectable.
         vadEngine.preload()
-        recorder.preload()
         livePreview.onUpdate = { [weak self] text in self?.livePreviewText = text }
         // Same reason `vadEngine.preload()` is here: the model's cold
         // start is seconds long, and paying it on the first dictation

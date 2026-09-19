@@ -195,8 +195,13 @@ final class LivePreviewTranscriber {
             // per-chunk timing on record, split append vs. process so a
             // slow step is identifiable rather than one lumped number.
             if processed <= 15 {
+                // `text.count` included deliberately: a chunk that
+                // appends and processes cleanly but decodes to nothing
+                // looks identical to a healthy one without it, which is
+                // exactly the state that made "no live text" impossible
+                // to diagnose from these logs.
                 dictationLog.info(
-                    "livePreview: chunk \(processed) — append \(processStart.timeIntervalSince(appendStart), format: .fixed(precision: 3))s, process \(processDone.timeIntervalSince(processStart), format: .fixed(precision: 3))s, \(self.queue.count) queued")
+                    "livePreview: chunk \(processed) — append \(processStart.timeIntervalSince(appendStart), format: .fixed(precision: 3))s, process \(processDone.timeIntervalSince(processStart), format: .fixed(precision: 3))s, \(self.queue.count) queued, text \(text.count) chars")
             }
             // Every 10th buffer beyond that: queue depth still growing here
             // means processing can't keep up with real-time speech, which

@@ -1,3 +1,4 @@
+import AVFoundation
 import AppKit
 import Foundation
 
@@ -15,6 +16,9 @@ struct ChirpMain {
             case "--transcribe":
                 guard let path = arguments.next() else { usageAndExit() }
                 mode = .transcribe(path)
+            case "--live-preview":
+                guard let path = arguments.next() else { usageAndExit() }
+                mode = .livePreview(path)
             case "--format":
                 guard let text = arguments.next() else { usageAndExit() }
                 mode = .format(text)
@@ -139,6 +143,14 @@ struct ChirpMain {
                 exit(1)
             }
 
+        // Feeds an audio file through `LivePreviewTranscriber` exactly as
+        // a live recording would — one tap-sized buffer at a time — and
+        // prints each partial. The only way to test the live preview
+        // without speaking into a microphone, which is what made "no live
+        // text" so hard to pin down.
+        case .livePreview(let path):
+            await runLivePreview(path: path)
+
         case .transcribe(let path):
             do {
                 // --bundle-id resolves developer-vocabulary the same way a
@@ -233,6 +245,43 @@ struct ChirpMain {
         case historySearch(String)
         case historyExport(String)
         case selftest
+        case livePreview(String)
+    }
+
+    @MainActor
+    private static func runLivePreview(path: String) async {
+        let url = URL(fileURLWithPath: path)
+        guard let file = try? AVAudioFile(forReading: url) else {
+            FileHandle.standardError.write(Data("Could not open \(path)\n".utf8))
+            exit(1)
+        }
+        let preview = LivePreviewTranscriber()
+        var lastPrinted = ""
+        preview.onUpdate = { text in
+            guard text != lastPrinted else { return }
+            lastPrinted = text
+            print("partial: \(text)")
+        }
+        preview.start()
+
+        // 4096 frames is what `AudioRecorder`'s own tap delivers, so the
+        // model sees the same chunking a real dictation produces.
+        let frames: AVAudioFrameCount = 4096
+        while true {
+            guard let buffer = AVAudioPCMBuffer(
+                pcmFormat: file.processingFormat, frameCapacity: frames) else { break }
+            do { try file.read(into: buffer, frameCount: frames) } catch { break }
+            if buffer.frameLength == 0 { break }
+            preview.enqueue(buffer)
+            // Let the drain task actually run between buffers.
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+        // Give the queue time to finish decoding what's left.
+        for _ in 0..<200 {
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        print("final partial: \(lastPrinted.isEmpty ? "<empty>" : lastPrinted)")
+        exit(0)
     }
 
     /// One line per entry, tab-separated: timestamp, word count, text. Text

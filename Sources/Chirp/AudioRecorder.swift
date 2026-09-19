@@ -14,15 +14,6 @@ import Foundation
 final class AudioRecorder {
     private let engine = AVAudioEngine()
 
-    /// Allocates the engine's resources ahead of the first key press.
-    ///
-    /// `prepare()` does not open the microphone — no recording indicator,
-    /// nothing captured — it just does the allocation that would
-    /// otherwise happen inside the first `start()`, which is the one most
-    /// likely to lose a word because the user is already talking.
-    func preload() {
-        engine.prepare()
-    }
     private var file: AVAudioFile?
     private(set) var currentFileURL: URL?
     private(set) var isRecording = false
@@ -278,21 +269,17 @@ final class AudioRecorder {
             dictationLog.info("mic route: no built-in mic found, using system default")
             return
         }
-        // Only when it isn't already pinned there. Setting
-        // `CurrentDevice` re-initialises the audio unit and renegotiates
-        // the hardware route — hundreds of milliseconds, paid on *every*
-        // key press, and it was being paid even when the answer was
-        // "it's already the built-in mic". That's the delay where the
-        // first word of a dictation went missing.
-        var current = AudioDeviceID(0)
-        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
-        let readStatus = AudioUnitGetProperty(
-            unit, kAudioOutputUnitProperty_CurrentDevice,
-            kAudioUnitScope_Global, 0, &current, &size)
-        if readStatus == noErr, current == deviceID {
-            dictationLog.info("mic route: already on built-in device \(deviceID)")
-            return
-        }
+        // Set unconditionally, every start, even when the unit already
+        // reports this device.
+        //
+        // Skipping the redundant set was tried as a latency fix — it
+        // genuinely saved most of a second — and it silently broke the
+        // live preview: buffers still arrived and the model still ran,
+        // but decoded to nothing. Setting `CurrentDevice` re-initialises
+        // the audio unit, and something about that reinit is load-bearing
+        // for what the tap actually delivers. The recording itself still
+        // worked, which is why this was so hard to see. Do not "optimise"
+        // this again without a way to test the live preview end to end.
         let status = AudioUnitSetProperty(
             unit, kAudioOutputUnitProperty_CurrentDevice,
             kAudioUnitScope_Global, 0,

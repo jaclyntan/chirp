@@ -64,7 +64,7 @@ struct OnboardingRoot: View {
             footer
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Palette.panel)
+        .background(Palette.paper)
     }
 
     // MARK: - Chrome
@@ -73,7 +73,7 @@ struct OnboardingRoot: View {
         HStack(spacing: 5) {
             ForEach(Step.allCases, id: \.self) { s in
                 Capsule()
-                    .fill(s.rawValue <= step.rawValue ? Palette.accentText : Palette.border)
+                    .fill(s.rawValue <= step.rawValue ? Palette.sunsetDeep : Palette.warmDivider)
                     .frame(maxWidth: .infinity)
                     .frame(height: 3)
             }
@@ -132,12 +132,11 @@ struct OnboardingRoot: View {
     private func stepHeader(_ title: String, _ subtitle: String) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(title)
-                .font(.manrope(24, .bold))
-                .tracking(-0.3)
-                .foregroundStyle(Palette.ink)
+                .font(.chirpDisplay(26, .regular))
+                .foregroundStyle(Palette.warmInk)
             Text(subtitle)
                 .font(.manrope(13.5))
-                .foregroundStyle(Palette.inkSoft)
+                .foregroundStyle(Palette.warmInkSoft)
                 .lineSpacing(2)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: 430, alignment: .leading)
@@ -154,19 +153,19 @@ struct OnboardingRoot: View {
             Text("WELCOME TO CHIRP")
                 .font(.manrope(11, .bold))
                 .kerning(1.4)
-                .foregroundStyle(Palette.accentText)
+                .foregroundStyle(Palette.sunsetDeep)
                 .padding(.bottom, 14)
             Text("Everything you say, turned into text — without leaving your Mac.")
                 .font(.manrope(30, .bold))
                 .tracking(-0.4)
                 .lineSpacing(3)
-                .foregroundStyle(Palette.ink)
+                .foregroundStyle(Palette.warmInk)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: 440, alignment: .leading)
                 .padding(.bottom, 12)
             Text("Chirp listens only while you hold a key, transcribes on-device, and drops the result wherever your cursor already is.")
                 .font(.manrope(14))
-                .foregroundStyle(Palette.inkSoft)
+                .foregroundStyle(Palette.warmInkSoft)
                 .lineSpacing(3)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: 430, alignment: .leading)
@@ -183,10 +182,10 @@ struct OnboardingRoot: View {
         VStack(alignment: .leading, spacing: 10) {
             ChirpIconView(icon: icon)
                 .frame(width: 18, height: 18)
-                .foregroundStyle(Palette.accentText)
+                .foregroundStyle(Palette.sunsetDeep)
             Text(text)
                 .font(.manrope(11.5, .medium))
-                .foregroundStyle(Palette.inkSoft)
+                .foregroundStyle(Palette.warmInkSoft)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: 122, alignment: .leading)
@@ -220,7 +219,7 @@ struct OnboardingRoot: View {
             }
             Text("You can change either of these later in System Settings → Privacy & Security.")
                 .font(.manrope(11.5))
-                .foregroundStyle(Palette.inkFaint)
+                .foregroundStyle(Palette.warmInkFaint)
                 .padding(.top, 16)
         }
         .onChange(of: app.micAuthorized) { _, granted in if granted { celebratePermissionGrant() } }
@@ -267,15 +266,15 @@ struct OnboardingRoot: View {
             HStack(spacing: 10) {
                 ChirpIconView(icon: .mic)
                     .frame(width: 15, height: 15)
-                    .foregroundStyle(Palette.inkSoft)
+                    .foregroundStyle(Palette.warmInkSoft)
                 Text(defaultInputName)
                     .font(.manrope(12.5, .semibold))
-                    .foregroundStyle(Palette.ink)
+                    .foregroundStyle(Palette.warmInk)
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 11)
-            .background(Palette.card, in: RoundedRectangle(cornerRadius: Radius.md))
-            .overlay(RoundedRectangle(cornerRadius: Radius.md).stroke(Palette.border, lineWidth: 1))
+            .background(Palette.surface, in: RoundedRectangle(cornerRadius: Radius.md))
+            .overlay(RoundedRectangle(cornerRadius: Radius.md).stroke(Palette.warmDivider, lineWidth: 1))
             .frame(maxWidth: 300, alignment: .leading)
             Spacer(minLength: 24)
             HStack {
@@ -342,28 +341,26 @@ struct OnboardingRoot: View {
                 Circle().fill(Palette.accentSoft).frame(width: 56, height: 56)
                 ChirpIconView(icon: .check)
                     .frame(width: 22, height: 22)
-                    .foregroundStyle(Palette.accentText)
+                    .foregroundStyle(Palette.sunsetDeep)
             }
             .padding(.bottom, 22)
             Text("You're all set.")
-                .font(.manrope(24, .bold))
-                .tracking(-0.3)
-                .foregroundStyle(Palette.ink)
+                .font(.chirpDisplay(26, .regular))
+                .foregroundStyle(Palette.warmInk)
                 .padding(.bottom, 8)
             Text("Chirp is running quietly in your menu bar.")
                 .font(.manrope(13.5))
-                .foregroundStyle(Palette.inkSoft)
+                .foregroundStyle(Palette.warmInkSoft)
                 .padding(.bottom, 20)
             HStack(spacing: 14) {
                 Keycap(text: app.hotkey.shortSymbol)
                 Text("Hold **\(app.hotkey.displayName)** anywhere to start dictating — release when you're done.")
                     .font(.manrope(12.5))
-                    .foregroundStyle(Palette.inkSoft)
+                    .foregroundStyle(Palette.warmInkSoft)
                     .fixedSize(horizontal: false, vertical: true)
             }
             .padding(16)
-            .background(Palette.card, in: RoundedRectangle(cornerRadius: Radius.lg))
-            .overlay(RoundedRectangle(cornerRadius: Radius.lg).stroke(Palette.border, lineWidth: 1))
+            .chirpSurface()
             .frame(maxWidth: 420, alignment: .leading)
         }
     }
@@ -375,11 +372,11 @@ private struct RadioDot: View {
     let selected: Bool
     var body: some View {
         Circle()
-            .strokeBorder(selected ? Palette.accentText : Palette.border, lineWidth: 1.5)
+            .strokeBorder(selected ? Palette.sunsetDeep : Palette.warmDivider, lineWidth: 1.5)
             .frame(width: 18, height: 18)
             .overlay {
                 if selected {
-                    Circle().fill(Palette.accentText).frame(width: 9, height: 9)
+                    Circle().fill(Palette.sunsetDeep).frame(width: 9, height: 9)
                 }
             }
     }
@@ -396,16 +393,16 @@ private struct PermissionRow: View {
         HStack(spacing: 14) {
             ChirpIconView(icon: icon)
                 .frame(width: 17, height: 17)
-                .foregroundStyle(granted ? Palette.accentText : Palette.inkSoft)
+                .foregroundStyle(granted ? Palette.sunsetDeep : Palette.warmInkSoft)
                 .frame(width: 38, height: 38)
                 .background(
                     RoundedRectangle(cornerRadius: 10)
-                        .fill(granted ? Palette.accentSoft : Palette.cardHover))
+                        .fill(granted ? Palette.sunsetSoft : Palette.warmRowBorder))
             VStack(alignment: .leading, spacing: 3) {
-                Text(title).font(.manrope(14, .bold)).foregroundStyle(Palette.ink)
+                Text(title).font(.manrope(14, .bold)).foregroundStyle(Palette.warmInk)
                 Text(detail)
                     .font(.manrope(12))
-                    .foregroundStyle(Palette.inkFaint)
+                    .foregroundStyle(Palette.warmInkFaint)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 12)
@@ -414,7 +411,7 @@ private struct PermissionRow: View {
                     ChirpIconView(icon: .check).frame(width: 11, height: 11)
                     Text("Allowed").font(.manrope(12, .bold))
                 }
-                .foregroundStyle(Palette.accentText)
+                .foregroundStyle(Palette.sunsetDeep)
             } else {
                 Button("Allow", action: action)
                     .buttonStyle(GhostButtonStyle())
@@ -423,10 +420,10 @@ private struct PermissionRow: View {
         .padding(16)
         .background(
             RoundedRectangle(cornerRadius: Radius.lg)
-                .fill(granted ? Palette.accentSoft : Palette.card))
+                .fill(granted ? Palette.sunsetSoft : Palette.surface))
         .overlay(
             RoundedRectangle(cornerRadius: Radius.lg)
-                .stroke(granted ? Color.clear : Palette.border, lineWidth: 1))
+                .stroke(granted ? Color.clear : Palette.warmDivider, lineWidth: 1))
     }
 }
 
@@ -440,12 +437,12 @@ private struct HotkeyOptionRow: View {
             HStack(spacing: 14) {
                 Keycap(
                     text: hotkey.shortSymbol,
-                    tint: selected ? Palette.accentInk : Palette.inkSoft,
+                    tint: selected ? Palette.accentInk : Palette.warmInkSoft,
                     background: selected ? Palette.accent : Palette.cardHover,
-                    borderColor: selected ? Palette.accent : Palette.border)
+                    borderColor: selected ? Palette.accent : Palette.warmDivider)
                 Text(hotkey.displayName)
                     .font(.manrope(13.5, .semibold))
-                    .foregroundStyle(Palette.ink)
+                    .foregroundStyle(Palette.warmInk)
                 Spacer(minLength: 0)
                 RadioDot(selected: selected)
             }
@@ -453,10 +450,10 @@ private struct HotkeyOptionRow: View {
             .padding(.vertical, 13)
             .background(
                 RoundedRectangle(cornerRadius: Radius.md)
-                    .fill(selected ? Palette.accentSoft : Palette.card))
+                    .fill(selected ? Palette.sunsetSoft : Palette.surface))
             .overlay(
                 RoundedRectangle(cornerRadius: Radius.md)
-                    .stroke(selected ? Palette.accentText : Palette.border, lineWidth: selected ? 1.5 : 1))
+                    .stroke(selected ? Palette.sunsetDeep : Palette.warmDivider, lineWidth: selected ? 1.5 : 1))
         }
         .buttonStyle(.plain)
     }
