@@ -1,0 +1,276 @@
+{
+  "canvas": {
+    "w": 32,
+    "h": 32
+  },
+  "states": {
+    "idle": {
+      "loop": true,
+      "frame_count": 4,
+      "frame_durations_ms": [
+        700,
+        140,
+        700,
+        140
+      ],
+      "notes": "Slow ambient loop, ~1.4s per cycle.",
+      "aseprite": "wren_idle.aseprite",
+      "sprite_sheet": "wren_idle_sheet.png",
+      "sprite_sheet_frame_size": [
+        32,
+        32
+      ],
+      "sprite_sheet_layout": "horizontal strip, left to right",
+      "numbered_frames": [
+        "wren_idle_00.png",
+        "wren_idle_01.png",
+        "wren_idle_02.png",
+        "wren_idle_03.png"
+      ],
+      "gif_preview": "wren_idle.gif"
+    },
+    "idle_preen": {
+      "loop": true,
+      "frame_count": 6,
+      "frame_durations_ms": [
+        220,
+        130,
+        120,
+        110,
+        140,
+        260
+      ],
+      "notes": "One-shot-feeling grooming beat, loops with a long hold.",
+      "aseprite": "wren_idle_preen.aseprite",
+      "sprite_sheet": "wren_idle_preen_sheet.png",
+      "sprite_sheet_frame_size": [
+        32,
+        32
+      ],
+      "sprite_sheet_layout": "horizontal strip, left to right",
+      "numbered_frames": [
+        "wren_idle_preen_00.png",
+        "wren_idle_preen_01.png",
+        "wren_idle_preen_02.png",
+        "wren_idle_preen_03.png",
+        "wren_idle_preen_04.png",
+        "wren_idle_preen_05.png"
+      ],
+      "gif_preview": "wren_idle_preen.gif"
+    },
+    "idle_tailflick": {
+      "loop": true,
+      "frame_count": 4,
+      "frame_durations_ms": [
+        600,
+        70,
+        70,
+        600
+      ],
+      "notes": "Snappy flick, long holds either side.",
+      "aseprite": "wren_idle_tailflick.aseprite",
+      "sprite_sheet": "wren_idle_tailflick_sheet.png",
+      "sprite_sheet_frame_size": [
+        32,
+        32
+      ],
+      "sprite_sheet_layout": "horizontal strip, left to right",
+      "numbered_frames": [
+        "wren_idle_tailflick_00.png",
+        "wren_idle_tailflick_01.png",
+        "wren_idle_tailflick_02.png",
+        "wren_idle_tailflick_03.png"
+      ],
+      "gif_preview": "wren_idle_tailflick.gif"
+    },
+    "listening": {
+      "loop": true,
+      "frame_count": 4,
+      "frame_durations_ms": [
+        160,
+        140,
+        650,
+        150
+      ],
+      "notes": "Snaps into alert, holds with a tiny wobble while recording.",
+      "aseprite": "wren_listening.aseprite",
+      "sprite_sheet": "wren_listening_sheet.png",
+      "sprite_sheet_frame_size": [
+        32,
+        32
+      ],
+      "sprite_sheet_layout": "horizontal strip, left to right",
+      "numbered_frames": [
+        "wren_listening_00.png",
+        "wren_listening_01.png",
+        "wren_listening_02.png",
+        "wren_listening_03.png"
+      ],
+      "gif_preview": "wren_listening.gif"
+    },
+    "processing": {
+      "loop": true,
+      "frame_count": 4,
+      "frame_durations_ms": [
+        110,
+        110,
+        110,
+        110
+      ],
+      "notes": "Fast, tiny loop \u2014 on screen well under a second most runs.",
+      "aseprite": "wren_processing.aseprite",
+      "sprite_sheet": "wren_processing_sheet.png",
+      "sprite_sheet_frame_size": [
+        32,
+        32
+      ],
+      "sprite_sheet_layout": "horizontal strip, left to right",
+      "numbered_frames": [
+        "wren_processing_00.png",
+        "wren_processing_01.png",
+        "wren_processing_02.png",
+        "wren_processing_03.png"
+      ],
+      "gif_preview": "wren_processing.gif"
+    },
+    "activated": {
+      "loop": false,
+      "frame_count": 7,
+      "frame_durations_ms": [
+        60,
+        50,
+        60,
+        60,
+        50,
+        60,
+        90
+      ],
+      "notes": "Single-shot, ~430ms total. Do not loop \u2014 return to idle after.",
+      "aseprite": "wren_activated.aseprite",
+      "sprite_sheet": "wren_activated_sheet.png",
+      "sprite_sheet_frame_size": [
+        32,
+        32
+      ],
+      "sprite_sheet_layout": "horizontal strip, left to right",
+      "numbered_frames": [
+        "wren_activated_00.png",
+        "wren_activated_01.png",
+        "wren_activated_02.png",
+        "wren_activated_03.png",
+        "wren_activated_04.png",
+        "wren_activated_05.png",
+        "wren_activated_06.png"
+      ],
+      "gif_preview": "wren_activated.gif"
+    },
+    "hop": {
+      "loop": true,
+      "frame_count": 4,
+      "frame_durations_ms": [
+        90,
+        70,
+        70,
+        160
+      ],
+      "notes": "Loopable low bounce, ~390ms per cycle.",
+      "aseprite": "wren_hop.aseprite",
+      "sprite_sheet": "wren_hop_sheet.png",
+      "sprite_sheet_frame_size": [
+        32,
+        32
+      ],
+      "sprite_sheet_layout": "horizontal strip, left to right",
+      "numbered_frames": [
+        "wren_hop_00.png",
+        "wren_hop_01.png",
+        "wren_hop_02.png",
+        "wren_hop_03.png"
+      ],
+      "gif_preview": "wren_hop.gif"
+    },
+    "walk": {
+      "loop": true,
+      "frame_count": 6,
+      "frame_durations_ms": [
+        70,
+        60,
+        60,
+        60,
+        60,
+        90
+      ],
+      "notes": "Loopable hopping traverse, ~400ms per cycle \u2014 plays while the bird is actually moving between two points on screen.",
+      "aseprite": "wren_walk.aseprite",
+      "sprite_sheet": "wren_walk_sheet.png",
+      "sprite_sheet_frame_size": [
+        32,
+        32
+      ],
+      "sprite_sheet_layout": "horizontal strip, left to right",
+      "numbered_frames": [
+        "wren_walk_00.png",
+        "wren_walk_01.png",
+        "wren_walk_02.png",
+        "wren_walk_03.png",
+        "wren_walk_04.png",
+        "wren_walk_05.png"
+      ],
+      "gif_preview": "wren_walk.gif"
+    },
+    "hover": {
+      "loop": true,
+      "frame_count": 5,
+      "frame_durations_ms": [
+        140,
+        120,
+        500,
+        130,
+        150
+      ],
+      "notes": "Loops for as long as the cursor stays over the wren, ~1040ms per cycle; returns to idle the moment it ends.",
+      "aseprite": "wren_hover.aseprite",
+      "sprite_sheet": "wren_hover_sheet.png",
+      "sprite_sheet_frame_size": [
+        32,
+        32
+      ],
+      "sprite_sheet_layout": "horizontal strip, left to right",
+      "numbered_frames": [
+        "wren_hover_00.png",
+        "wren_hover_01.png",
+        "wren_hover_02.png",
+        "wren_hover_03.png",
+        "wren_hover_04.png"
+      ],
+      "gif_preview": "wren_hover.gif"
+    },
+    "chirp": {
+      "loop": true,
+      "frame_count": 5,
+      "frame_durations_ms": [
+        90,
+        60,
+        140,
+        80,
+        110
+      ],
+      "notes": "Loopable singing pulse, ~480ms per cycle \u2014 plays for as long as the app has live mic level to react to.",
+      "aseprite": "wren_chirp.aseprite",
+      "sprite_sheet": "wren_chirp_sheet.png",
+      "sprite_sheet_frame_size": [
+        32,
+        32
+      ],
+      "sprite_sheet_layout": "horizontal strip, left to right",
+      "numbered_frames": [
+        "wren_chirp_00.png",
+        "wren_chirp_01.png",
+        "wren_chirp_02.png",
+        "wren_chirp_03.png",
+        "wren_chirp_04.png"
+      ],
+      "gif_preview": "wren_chirp.gif"
+    }
+  }
+}

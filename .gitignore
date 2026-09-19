@@ -1,0 +1,25 @@
+# Build artifacts
+.build/
+build/
+DerivedData/
+*.xcodeproj
+Vendor/harper-ffi/target/
+
+# Benchmark-only Python venv (scripts/benchmark_engines.py, TheWhisper row)
+.venv-thewhisper/
+
+# Machine-local tool config (contains local paths)
+.claude/
+
+# macOS noise
+.DS_Store
+
+# Never commit signing material
+*.p12
+*.pem
+*.cer
+*.p8
+*.mobileprovision
+
+# Xcode-generated SPM state, not the Package.swift-managed sources
+.swiftpm/

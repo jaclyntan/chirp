@@ -1,0 +1,167 @@
+{
+  "canvas": {
+    "w": 32,
+    "h": 32
+  },
+  "states": {
+    "idle": {
+      "loop": true,
+      "sprite_sheet": "wren_idle_sheet.png",
+      "frame_size": [
+        32,
+        32
+      ],
+      "frame_count": 4,
+      "frame_durations_ms": [
+        700,
+        140,
+        700,
+        140
+      ]
+    },
+    "idle_preen": {
+      "loop": true,
+      "sprite_sheet": "wren_idle_preen_sheet.png",
+      "frame_size": [
+        32,
+        32
+      ],
+      "frame_count": 6,
+      "frame_durations_ms": [
+        220,
+        130,
+        120,
+        110,
+        140,
+        260
+      ]
+    },
+    "idle_tailflick": {
+      "loop": true,
+      "sprite_sheet": "wren_idle_tailflick_sheet.png",
+      "frame_size": [
+        32,
+        32
+      ],
+      "frame_count": 4,
+      "frame_durations_ms": [
+        600,
+        70,
+        70,
+        600
+      ]
+    },
+    "listening": {
+      "loop": true,
+      "sprite_sheet": "wren_listening_sheet.png",
+      "frame_size": [
+        32,
+        32
+      ],
+      "frame_count": 4,
+      "frame_durations_ms": [
+        160,
+        140,
+        650,
+        150
+      ]
+    },
+    "processing": {
+      "loop": true,
+      "sprite_sheet": "wren_processing_sheet.png",
+      "frame_size": [
+        32,
+        32
+      ],
+      "frame_count": 4,
+      "frame_durations_ms": [
+        110,
+        110,
+        110,
+        110
+      ]
+    },
+    "activated": {
+      "loop": false,
+      "sprite_sheet": "wren_activated_sheet.png",
+      "frame_size": [
+        32,
+        32
+      ],
+      "frame_count": 7,
+      "frame_durations_ms": [
+        60,
+        50,
+        60,
+        60,
+        50,
+        60,
+        90
+      ]
+    },
+    "hop": {
+      "loop": true,
+      "sprite_sheet": "wren_hop_sheet.png",
+      "frame_size": [
+        32,
+        32
+      ],
+      "frame_count": 4,
+      "frame_durations_ms": [
+        90,
+        70,
+        70,
+        160
+      ]
+    },
+    "walk": {
+      "loop": true,
+      "sprite_sheet": "wren_walk_sheet.png",
+      "frame_size": [
+        32,
+        32
+      ],
+      "frame_count": 6,
+      "frame_durations_ms": [
+        70,
+        60,
+        60,
+        60,
+        60,
+        90
+      ]
+    },
+    "hover": {
+      "loop": true,
+      "sprite_sheet": "wren_hover_sheet.png",
+      "frame_size": [
+        32,
+        32
+      ],
+      "frame_count": 5,
+      "frame_durations_ms": [
+        140,
+        120,
+        500,
+        130,
+        150
+      ]
+    },
+    "chirp": {
+      "loop": true,
+      "sprite_sheet": "wren_chirp_sheet.png",
+      "frame_size": [
+        32,
+        32
+      ],
+      "frame_count": 5,
+      "frame_durations_ms": [
+        90,
+        60,
+        140,
+        80,
+        110
+      ]
+    }
+  }
+}

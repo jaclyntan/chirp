@@ -1,0 +1,15 @@
+[package]
+name = "harper-ffi"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "harper_ffi"
+crate-type = ["staticlib"]
+
+[dependencies]
+harper-core = "2.8"
+
+[profile.release]
+lto = true
