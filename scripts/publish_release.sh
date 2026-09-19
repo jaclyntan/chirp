@@ -47,7 +47,7 @@ if gh release view "$TAG" >/dev/null 2>&1; then
 fi
 
 # --- Build ----------------------------------------------------------------
-echo "Building $TAG…"
+echo "Building ${TAG}…"
 ./scripts/make_release.sh >/dev/null
 
 BUILT=$(defaults read "$(pwd)/build/Chirp.app/Contents/Info" CFBundleShortVersionString)
