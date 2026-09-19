@@ -216,9 +216,18 @@ private struct StatusHUDView: View {
                 // lines you want the newest words, not the oldest. A
                 // top-anchored box would scroll your own speech out of
                 // sight the moment it overflowed.
+                // Styled as visibly provisional — dimmer and italic —
+                // because it is. This is a different, faster model than
+                // the one that produces the real transcript, and it has
+                // had none of the cleanup (punctuation, capitalisation,
+                // filler removal, dictionary, snippets) applied. Set it
+                // like finished text and every difference reads as "it
+                // got that wrong" a second before the correct words
+                // appear; set it like a draft and the same differences
+                // read as "it's still thinking", which is the truth.
                 Text(model.liveText)
-                    .font(.manrope(13))
-                    .foregroundStyle(.white.opacity(0.92))
+                    .font(.manrope(13).italic())
+                    .foregroundStyle(.white.opacity(0.62))
                     .lineSpacing(3)
                     .lineLimit(3)
                     .truncationMode(.head)
