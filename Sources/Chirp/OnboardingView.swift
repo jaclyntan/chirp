@@ -94,7 +94,7 @@ struct OnboardingRoot: View {
                     Text(primaryLabel)
                     ChirpIconView(icon: .arrowRight).frame(width: 12, height: 12)
                 }
-                .font(.manrope(13.5, .bold))
+                .font(.manrope(13, .semibold))
                 .foregroundStyle(Palette.accentInk)
                 .padding(.horizontal, 20)
                 .padding(.vertical, 12)
@@ -151,29 +151,28 @@ struct OnboardingRoot: View {
             AnimatedWrenView(state: "idle", size: 72)
                 .padding(.bottom, 22)
             Text("WELCOME TO CHIRP")
-                .font(.manrope(11, .bold))
-                .kerning(1.4)
-                .foregroundStyle(Palette.sunsetDeep)
+                .font(.manrope(10.5, .bold))
+                .tracking(1.05)
+                .foregroundStyle(Palette.warmInkFaint)
                 .padding(.bottom, 14)
             Text("Everything you say, turned into text — without leaving your Mac.")
-                .font(.manrope(30, .bold))
-                .tracking(-0.4)
+                .font(.chirpDisplay(31, .regular))
                 .lineSpacing(3)
                 .foregroundStyle(Palette.warmInk)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: 440, alignment: .leading)
                 .padding(.bottom, 12)
             Text("Chirp listens only while you hold a key, transcribes on-device, and drops the result wherever your cursor already is.")
-                .font(.manrope(14))
+                .font(.manrope(12.5))
                 .foregroundStyle(Palette.warmInkSoft)
                 .lineSpacing(3)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: 430, alignment: .leading)
                 .padding(.bottom, 28)
             HStack(alignment: .top, spacing: 26) {
-                fact(.lock, "Private & on-device — audio never leaves this Mac")
-                fact(.apps, "Works in any app you already use")
-                fact(.check, "Formats itself — yours to correct anytime")
+                fact(.lock, "Nothing leaves your Mac")
+                fact(.apps, "Works in every app")
+                fact(.check, "Cleans up as it types")
             }
         }
     }
@@ -199,7 +198,7 @@ struct OnboardingRoot: View {
                 AnimatedWrenView(state: permissionWrenState, size: 44)
                 stepHeader(
                     "Let's get you set up",
-                    "Two permissions, and Chirp is ready. Nothing you say ever leaves this Mac either way.")
+                    "Two permissions and Chirp is ready.")
             }
             VStack(spacing: 10) {
                 PermissionRow(
@@ -211,7 +210,7 @@ struct OnboardingRoot: View {
                 }
                 PermissionRow(
                     icon: .fingerprint, title: "Accessibility",
-                    detail: "Lets Chirp paste text into the app you're using and detect your hotkey system-wide.",
+                    detail: "Lets Chirp watch for your hotkey and paste the result. Without it, text is copied to your clipboard instead.",
                     granted: app.axTrusted
                 ) {
                     app.refreshPermissions(promptAccessibility: true)
@@ -348,20 +347,32 @@ struct OnboardingRoot: View {
                 .font(.chirpDisplay(26, .regular))
                 .foregroundStyle(Palette.warmInk)
                 .padding(.bottom, 8)
-            Text("Chirp is running quietly in your menu bar.")
+            Text("Chirp lives in your menu bar — there's no Dock icon.")
                 .font(.manrope(13.5))
                 .foregroundStyle(Palette.warmInkSoft)
                 .padding(.bottom, 20)
-            HStack(spacing: 14) {
-                Keycap(text: app.hotkey.shortSymbol)
-                Text("Hold **\(app.hotkey.displayName)** anywhere to start dictating — release when you're done.")
-                    .font(.manrope(12.5))
-                    .foregroundStyle(Palette.warmInkSoft)
-                    .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(spacing: 14) {
+                    Keycap(text: app.hotkey.shortSymbol)
+                    Text("Hold **\(app.hotkey.displayName)** anywhere to dictate — release when you're done.")
+                        .font(.manrope(12.5))
+                        .foregroundStyle(Palette.warmInkSoft)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Divider().overlay(Palette.warmDivider)
+                HStack(spacing: 14) {
+                    AnimatedWrenView(state: "idle", size: 34)
+                    Text("The wren on your desktop opens Chirp when clicked. Hover it for "
+                         + "a mic button — dictations started there show up in a speech "
+                         + "bubble you can copy from.")
+                        .font(.manrope(12.5))
+                        .foregroundStyle(Palette.warmInkSoft)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             .padding(16)
             .chirpSurface()
-            .frame(maxWidth: 420, alignment: .leading)
+            .frame(maxWidth: 440, alignment: .leading)
         }
     }
 }
@@ -399,7 +410,7 @@ private struct PermissionRow: View {
                     RoundedRectangle(cornerRadius: 10)
                         .fill(granted ? Palette.sunsetSoft : Palette.warmRowBorder))
             VStack(alignment: .leading, spacing: 3) {
-                Text(title).font(.manrope(14, .bold)).foregroundStyle(Palette.warmInk)
+                Text(title).font(.chirpDisplay(15, .medium)).foregroundStyle(Palette.warmInk)
                 Text(detail)
                     .font(.manrope(12))
                     .foregroundStyle(Palette.warmInkFaint)
@@ -409,7 +420,7 @@ private struct PermissionRow: View {
             if granted {
                 HStack(spacing: 5) {
                     ChirpIconView(icon: .check).frame(width: 11, height: 11)
-                    Text("Allowed").font(.manrope(12, .bold))
+                    Text("Allowed").font(.manrope(11.5, .semibold))
                 }
                 .foregroundStyle(Palette.sunsetDeep)
             } else {
@@ -441,7 +452,7 @@ private struct HotkeyOptionRow: View {
                     background: selected ? Palette.accent : Palette.cardHover,
                     borderColor: selected ? Palette.accent : Palette.warmDivider)
                 Text(hotkey.displayName)
-                    .font(.manrope(13.5, .semibold))
+                    .font(.chirpDisplay(14.5, .medium))
                     .foregroundStyle(Palette.warmInk)
                 Spacer(minLength: 0)
                 RadioDot(selected: selected)
