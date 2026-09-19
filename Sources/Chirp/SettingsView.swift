@@ -46,6 +46,10 @@ struct SettingsPage: View {
     @State private var notetakerHotkeyKeyCode = Settings.notetakerHotkeyKeyCode
     @State private var notetakerHotkeyModifiers = Settings.notetakerHotkeyModifiers
     @State private var showingNotetakerHotkeyEditor = false
+    @State private var pasteLastHotkeyEnabled = Settings.pasteLastHotkeyEnabled
+    @State private var pasteLastHotkeyKeyCode = Settings.pasteLastHotkeyKeyCode
+    @State private var pasteLastHotkeyModifiers = Settings.pasteLastHotkeyModifiers
+    @State private var showingPasteLastHotkeyEditor = false
 
     init(app: AppDelegate) {
         self.app = app
@@ -94,6 +98,10 @@ struct SettingsPage: View {
             notetakerHotkeyKeyCode = Settings.notetakerHotkeyKeyCode
             notetakerHotkeyModifiers = Settings.notetakerHotkeyModifiers
         }) { NotetakerHotkeyEditor() }
+        .sheet(isPresented: $showingPasteLastHotkeyEditor, onDismiss: {
+            pasteLastHotkeyKeyCode = Settings.pasteLastHotkeyKeyCode
+            pasteLastHotkeyModifiers = Settings.pasteLastHotkeyModifiers
+        }) { PasteLastHotkeyEditor() }
     }
 
     // MARK: Sections
@@ -360,6 +368,40 @@ struct SettingsPage: View {
                     .onChange(of: handsFreeAutoStop) { _, newValue in
                         Settings.handsFreeAutoStop = newValue
                     }
+            }
+            fieldRow(
+                label: "Paste last transcript",
+                detail: "A shortcut that drops your most recent transcript wherever the "
+                    + "cursor is — for when focus moved mid-dictation and the text landed "
+                    + "somewhere else.",
+                isLast: false
+            ) {
+                WarmToggle(isOn: $pasteLastHotkeyEnabled)
+                    .onChange(of: pasteLastHotkeyEnabled) { _, newValue in
+                        Settings.pasteLastHotkeyEnabled = newValue
+                        app.refreshPasteLastHotkey()
+                    }
+            }
+            if pasteLastHotkeyEnabled {
+                fieldRow(
+                    label: "Paste shortcut",
+                    detail: "Pick something no app you use has already claimed.",
+                    isLast: false
+                ) {
+                    Button { showingPasteLastHotkeyEditor = true } label: {
+                        HStack(spacing: 6) {
+                            ForEach(KeyComboLabel.symbols(for: pasteLastHotkeyModifiers), id: \.self) { symbol in
+                                notetakerKeycap(symbol)
+                            }
+                            notetakerKeycap(KeyComboLabel.keyName(for: pasteLastHotkeyKeyCode))
+                            ChirpIconView(icon: .edit)
+                                .frame(width: 10, height: 10)
+                                .foregroundStyle(Palette.warmInkFaint)
+                                .padding(.leading, 2)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
             }
             fieldRow(label: "Language") {
                 AccentFieldSelect(

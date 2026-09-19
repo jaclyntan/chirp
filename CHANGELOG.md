@@ -1,5 +1,33 @@
 # Changelog
 
+## v1.1.0 — 2026-09-19
+
+### New
+
+- **Paste last transcript**: an optional global shortcut (⌥V by default)
+  that drops your most recent transcript wherever the cursor is. For when
+  focus moved mid-dictation and the text landed somewhere else, or when
+  Accessibility wasn't granted and it only reached the clipboard. Off by
+  default, since it claims a global key combination.
+
+### Fixed
+
+- Global shortcuts no longer leak their own keystroke. An observe-only
+  monitor can't consume an event, so ⌥V fired the paste *and* typed `√`
+  into your text; Notetaker's ⌥M did the same with `µ`. Both now use a
+  `CGEvent` tap that swallows the keystroke.
+- A shortcut enabled before Accessibility was granted stayed dead until
+  the next relaunch — the tap now starts the moment the grant lands.
+- Onboarding never re-checked permissions, so granting Accessibility in
+  System Settings left the step showing "Allow" indefinitely.
+- Onboarding now offers Reset & Relaunch for a grant recorded against an
+  older build's signature — previously only reachable from Settings.
+- The microphone test now shows a real level meter and confirms when it
+  has heard you; the only live feedback before was a subtle scale pulse
+  on a sprite that animates regardless.
+- The live preview is styled as provisional text, since it comes from a
+  different model and hasn't been through the cleanup pipeline.
+
 ## v1.0.0 — 2026-09-19
 
 First release of Chirp. Private, on-device voice dictation for macOS.

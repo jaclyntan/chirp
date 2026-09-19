@@ -27,6 +27,12 @@ struct HelpPage: View {
                         row("Hands-free",
                             "Tap \(app.hotkey.displayName) twice quickly to keep recording "
                             + "without holding it down. One more tap stops and transcribes.")
+                        row("Paste the last transcript again",
+                            "If focus moved mid-dictation and your text landed in the "
+                            + "wrong place, a shortcut drops the most recent transcript "
+                            + "wherever the cursor is now. Off by default — switch it on "
+                            + "and pick a key in Settings.",
+                            link: ("Settings", { page = .settings }))
                         row("Voice commands",
                             "Say “new line” or “new paragraph” mid-dictation to add line "
                             + "breaks. Punctuation is added automatically from your pauses "

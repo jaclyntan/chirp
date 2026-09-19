@@ -48,7 +48,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Obse
     private let history = HistoryStore()
     let pipelineStats = PipelineStatsStore()
     let notetaker = NotetakerController()
-    private let notetakerHotkeyMonitor = NotetakerHotkeyMonitor()
+    private lazy var notetakerHotkeyMonitor = ConsumingHotkeyMonitor {
+        (Settings.notetakerHotkeyKeyCode, Settings.notetakerHotkeyModifiers)
+    }
+    private lazy var pasteLastHotkeyMonitor = ConsumingHotkeyMonitor {
+        (Settings.pasteLastHotkeyKeyCode, Settings.pasteLastHotkeyModifiers)
+    }
     private var transcriber = Transcriber(locale: Settings.locale)
     private lazy var hotkeyMonitor = HotkeyMonitor(hotkey: Settings.hotkey)
     let rewriteEngine = RewriteEngine()
@@ -181,7 +186,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Obse
                 self.notetaker.stop()
             }
         }
-        notetakerHotkeyMonitor.startMonitoring()
+        notetakerHotkeyMonitor.start()
+
+        pasteLastHotkeyMonitor.onTrigger = { [weak self] in self?.pasteLastTranscript() }
+        refreshPasteLastHotkey()
+    }
+
+    /// Starts or stops the paste-last monitor to match the setting, so
+    /// toggling it in Settings takes effect without a relaunch.
+    func refreshPasteLastHotkey() {
+        if Settings.pasteLastHotkeyEnabled {
+            pasteLastHotkeyMonitor.start()
+        } else {
+            pasteLastHotkeyMonitor.stop()
+        }
+    }
+
+    /// Pastes the most recent transcript wherever the cursor is now.
+    ///
+    /// Reuses `TextInserter`, so it behaves exactly like a dictation
+    /// landing: clipboard, ⌘V, previous clipboard restored. Without
+    /// Accessibility it degrades the same way too — the text ends up on
+    /// the clipboard and the error says so, rather than failing silently.
+    func pasteLastTranscript() {
+        guard let text = entries.first?.text, !text.isEmpty else {
+            lastError = "Nothing to paste yet — no transcripts recorded."
+            NSSound(named: "Basso")?.play()
+            return
+        }
+        guard AXIsProcessTrusted() else {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+            lastError = "Copied to the clipboard — grant Accessibility to paste directly."
+            NSSound(named: "Basso")?.play()
+            return
+        }
+        TextInserter.insert(text)
+        NSSound(named: "Tink")?.play()
     }
 
     /// Checks GitHub's own Releases API for this repo — no appcast, no
@@ -334,6 +375,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Obse
     // MARK: - Permissions
 
     func refreshPermissions(promptAccessibility: Bool = false) {
+        let wasTrusted = axTrusted
         if promptAccessibility {
             let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
             axTrusted = AXIsProcessTrustedWithOptions(options as CFDictionary)
@@ -341,6 +383,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Obse
             axTrusted = AXIsProcessTrusted()
         }
         micAuthorized = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+        // A `CGEvent` tap can't be created without Accessibility, so a
+        // shortcut switched on before the permission was granted silently
+        // did nothing until the next relaunch. Start the taps the moment
+        // the grant actually lands instead.
+        if axTrusted, !wasTrusted {
+            refreshPasteLastHotkey()
+            notetakerHotkeyMonitor.start()
+        }
     }
 
     // MARK: - Settings changes (from window or menu)
@@ -1030,6 +1080,35 @@ enum Settings {
             return NSEvent.ModifierFlags(rawValue: stored)
         }
         set { defaults.set(newValue.rawValue, forKey: "notetakerHotkeyModifiers") }
+    }
+
+    /// The shortcut that re-pastes the last transcript at the cursor —
+    /// see `PasteLastHotkeyMonitor` for why it exists.
+    static var pasteLastHotkeyKeyCode: UInt16 {
+        get {
+            guard let stored = defaults.object(forKey: "pasteLastHotkeyKeyCode") as? Int else {
+                return PasteLastHotkeyMonitor.defaultKeyCode
+            }
+            return UInt16(stored)
+        }
+        set { defaults.set(Int(newValue), forKey: "pasteLastHotkeyKeyCode") }
+    }
+    static var pasteLastHotkeyModifiers: NSEvent.ModifierFlags {
+        get {
+            guard let stored = defaults.object(forKey: "pasteLastHotkeyModifiers") as? UInt else {
+                return PasteLastHotkeyMonitor.defaultModifiers
+            }
+            return NSEvent.ModifierFlags(rawValue: stored)
+        }
+        set { defaults.set(newValue.rawValue, forKey: "pasteLastHotkeyModifiers") }
+    }
+
+    /// Off by default: it claims a global key combination, and a shortcut
+    /// that silently shadows one the user already relies on in another
+    /// app is worse than one they had to switch on themselves.
+    static var pasteLastHotkeyEnabled: Bool {
+        get { defaults.bool(forKey: "pasteLastHotkeyEnabled") }
+        set { defaults.set(newValue, forKey: "pasteLastHotkeyEnabled") }
     }
 
     /// Gates whether `NotetakerController` runs its two `LivePreviewTranscriber`

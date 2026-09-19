@@ -9,37 +9,15 @@ enum NotetakerState: Equatable {
     case processing
 }
 
-/// Notetaker's own global hotkey — same rebindable mechanism as
-/// `ScratchpadHotkeyMonitor`, just triggering a capture instead of toggling
-/// a panel. Default ⌥M, matching Wispr Flow's own "Press Opt + M to join a
-/// meeting or start the Notetaker" — free of collision with every other
-/// fixed combo this app owns (Transforms' ⌥1/⌥2 and the profile slots'
-/// ⌃⇧1…9 are on different keys entirely).
-@MainActor
-final class NotetakerHotkeyMonitor {
-    private var monitor: Any?
-    var onTrigger: (() -> Void)?
-
+/// Defaults for Notetaker's own global hotkey. Default ⌥M, matching Wispr
+/// Flow's own "Press Opt + M to join a meeting or start the Notetaker".
+///
+/// The monitoring itself uses `ConsumingHotkeyMonitor`: an observe-only
+/// global monitor fires the shortcut but lets the keystroke through, so
+/// ⌥M also typed `µ` into whatever had focus.
+enum NotetakerHotkeyMonitor {
     static let defaultKeyCode = UInt16(kVK_ANSI_M)
     static let defaultModifiers: NSEvent.ModifierFlags = [.option]
-
-    func startMonitoring() {
-        stopMonitoring()
-        monitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self else { return }
-            let modifiers = event.modifierFlags.intersection(
-                [.command, .option, .control, .shift])
-            guard modifiers == Settings.notetakerHotkeyModifiers,
-                  event.keyCode == Settings.notetakerHotkeyKeyCode
-            else { return }
-            Task { @MainActor in self.onTrigger?() }
-        }
-    }
-
-    func stopMonitoring() {
-        if let monitor { NSEvent.removeMonitor(monitor) }
-        monitor = nil
-    }
 }
 
 /// Owns the whole Notetaker feature end to end: detecting a likely

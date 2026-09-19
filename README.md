@@ -55,6 +55,8 @@ macOS 26 (Tahoe) or newer, on an Apple Silicon Mac.
 - **Learns your corrections** — fix a transcript in History and Chirp
   remembers the misheard word for next time. Ships with starter snippets
   and dictionary entries to edit or clear out wholesale.
+- **Paste last transcript** — an optional shortcut that re-pastes your most
+  recent transcript at the cursor, for when focus moved mid-dictation.
 - **Live transcript**, optionally — see the words appear in the wren's
   speech bubble as you speak.
 - **Opens at login**, optionally — so the dictation key works without
