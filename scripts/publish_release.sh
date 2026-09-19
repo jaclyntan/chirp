@@ -91,7 +91,6 @@ git push origin "$TAG"
 
 gh release create "$TAG" \
     "$DMG" \
-    "build/Chirp.dmg" \
     --title "Chirp $VERSION" \
     --notes "$NOTES"
 

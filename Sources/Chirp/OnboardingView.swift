@@ -27,6 +27,14 @@ struct OnboardingRoot: View {
     /// see `CaptureWaveform.level` for how it drives the bars, and
     /// `startMicTest()` for the scaling from raw RMS.
     @State private var micLevel: CGFloat = 0
+    /// Latches once the mic has clearly picked up speech. Latched, not
+    /// live, so the confirmation doesn't blink on and off between words.
+    @State private var micHeard = false
+    /// Polls while onboarding is on screen. Faster than the main
+    /// window's 5s: this is the one moment the user is actively waiting
+    /// for a permission to flip, rather than a background check.
+    private let permissionTimer = Timer.publish(
+        every: 1.5, on: .main, in: .common).autoconnect()
     /// Drives the small wren next to the permissions step's own header —
     /// see `celebratePermissionGrant()`.
     @State private var permissionWrenState = "idle"
@@ -216,6 +224,29 @@ struct OnboardingRoot: View {
                     app.refreshPermissions(promptAccessibility: true)
                 }
             }
+            // The escape hatch for a *stale* grant: Chirp is ticked in
+            // System Settings but macOS still reports it as untrusted,
+            // because the saved approval belongs to an older build's
+            // signature. Settings has had this button for a while, but
+            // Settings is unreachable from here — and onboarding is
+            // exactly where someone hits this, having just ticked the box
+            // and watched nothing happen. With no way out, the only read
+            // is "this app is broken".
+            if !app.axTrusted {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Already switched Chirp on in System Settings but it still says "
+                         + "Allow? The saved approval belongs to an older build. Reset it "
+                         + "and macOS will ask once more.")
+                        .font(.manrope(11.5))
+                        .foregroundStyle(Palette.warmInkSoft)
+                        .lineSpacing(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button("Reset & Relaunch") { app.resetAccessibilityGrant() }
+                        .buttonStyle(GhostButtonStyle())
+                }
+                .padding(.top, 14)
+                .frame(maxWidth: 440, alignment: .leading)
+            }
             Text("You can change either of these later in System Settings → Privacy & Security.")
                 .font(.manrope(11.5))
                 .foregroundStyle(Palette.warmInkFaint)
@@ -223,6 +254,20 @@ struct OnboardingRoot: View {
         }
         .onChange(of: app.micAuthorized) { _, granted in if granted { celebratePermissionGrant() } }
         .onChange(of: app.axTrusted) { _, granted in if granted { celebratePermissionGrant() } }
+        // Granting Accessibility happens in System Settings, in another
+        // app — so nothing here would otherwise notice. Without this the
+        // step sits on "Allow" forever after the user has already granted
+        // it, which reads as Chirp being broken on the very first screen.
+        //
+        // Both, deliberately: becoming active catches the common case
+        // (switching back from System Settings) the instant it happens,
+        // and the timer catches granting it while this window is still
+        // frontmost, which `didBecomeActive` never fires for.
+        .onReceive(NotificationCenter.default.publisher(
+            for: NSApplication.didBecomeActiveNotification)) { _ in
+            app.refreshPermissions()
+        }
+        .onReceive(permissionTimer) { _ in app.refreshPermissions() }
     }
 
     /// A one-shot "activated" hop the instant either permission is
@@ -275,25 +320,46 @@ struct OnboardingRoot: View {
             .background(Palette.surface, in: RoundedRectangle(cornerRadius: Radius.md))
             .overlay(RoundedRectangle(cornerRadius: Radius.md).stroke(Palette.warmDivider, lineWidth: 1))
             .frame(maxWidth: 300, alignment: .leading)
-            Spacer(minLength: 24)
-            HStack {
-                Spacer(minLength: 0)
-                // The abstract waveform bars are gone in favor of the
-                // wren's own real `chirp` state (PET_BRIEF.md's ask,
-                // delivered — `walk` was the placeholder here before it
-                // existed). `micLevel` (still genuinely live —
-                // `startMicTest()`/`stopMicTest()` below open and close
-                // the real mic, unchanged) still has to drive *something*
-                // here: without it, this step stops confirming the mic
-                // actually heard you, which is the one thing it exists to
-                // do. A scale pulse keyed to the live level keeps that
-                // same "did it react?" feedback while the wren chirps.
-                AnimatedWrenView(state: "chirp", size: 96)
-                    .scaleEffect(1 + micLevel * 0.22)
-                    .animation(.chirpEase(0.1), value: micLevel)
-                Spacer(minLength: 0)
+            Spacer(minLength: 20)
+            // The wren alone wasn't enough. It chirps on a loop whatever
+            // the microphone is doing, so the only thing tied to the live
+            // level was a 22% scale pulse — invisible against a sprite
+            // that's already moving. This step exists to answer one
+            // question ("is my microphone working?") and it has to answer
+            // it unmistakably: a meter that visibly tracks your voice,
+            // and a latched confirmation once it has definitely heard
+            // you, which stays put instead of flickering with every syllable.
+            VStack(spacing: 18) {
+                // Side by side, not stacked: a mic source next to its
+                // level meter is the arrangement people already know from
+                // every recording app, so it reads as "this bird is
+                // hearing that" without needing to be explained.
+                HStack(spacing: 22) {
+                    AnimatedWrenView(state: micHeard ? "chirp" : "listening", size: 76)
+                        .scaleEffect(1 + micLevel * 0.12)
+                        .animation(.chirpEase(0.1), value: micLevel)
+                    MicLevelMeter(level: micLevel)
+                }
+                HStack(spacing: 8) {
+                    if micHeard {
+                        ChirpIconView(icon: .check)
+                            .frame(width: 13, height: 13)
+                            .foregroundStyle(Palette.sunsetDeep)
+                        Text("Your microphone is working")
+                            .font(.manrope(13, .semibold))
+                            .foregroundStyle(Palette.sunsetDeep)
+                    } else {
+                        PulsingDot(color: Palette.warmInkFaint, size: 6,
+                                   maxScale: 2.2, active: true)
+                        Text("Listening — say something")
+                            .font(.manrope(13))
+                            .foregroundStyle(Palette.warmInkSoft)
+                    }
+                }
+                .animation(.chirpEase(0.2), value: micHeard)
             }
-            Spacer(minLength: 24)
+            .frame(maxWidth: .infinity)
+            Spacer(minLength: 20)
         }
         .onAppear { startMicTest() }
         .onDisappear { stopMicTest() }
@@ -320,6 +386,9 @@ struct OnboardingRoot: View {
             let normalized = min(1, CGFloat(rms) / 0.15)
             DispatchQueue.main.async {
                 micLevel = normalized
+                // Comfortably above room tone, so it takes real speech to
+                // trip rather than a fan or a passing car.
+                if normalized > 0.35 { micHeard = true }
             }
         }
         micTestRecorder = recorder
@@ -330,6 +399,7 @@ struct OnboardingRoot: View {
         _ = micTestRecorder?.stop()
         micTestRecorder = nil
         micLevel = 0
+        micHeard = false
     }
 
     // MARK: - Done
@@ -467,5 +537,38 @@ private struct HotkeyOptionRow: View {
                     .stroke(selected ? Palette.sunsetDeep : Palette.warmDivider, lineWidth: selected ? 1.5 : 1))
         }
         .buttonStyle(.plain)
+    }
+}
+
+/// A live input-level meter: bars light up left-to-right as you get
+/// louder, and each one's height tracks the level too.
+///
+/// Deliberately literal. The wren is charming but it animates on its own
+/// schedule, so it can't tell you whether the microphone is picking
+/// anything up — a meter that is visibly flat when you're silent and
+/// visibly moving when you speak is the only thing here that actually
+/// proves the input is live.
+private struct MicLevelMeter: View {
+    let level: CGFloat
+
+    private static let barCount = 13
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 5) {
+            ForEach(0..<Self.barCount, id: \.self) { index in
+                // Bars nearer the middle need less level to light, so
+                // quiet speech moves the centre and only a shout reaches
+                // the ends — the shape people already expect from a meter.
+                let distance = abs(CGFloat(index) - CGFloat(Self.barCount - 1) / 2)
+                let threshold = distance / CGFloat(Self.barCount)
+                let lit = level > threshold
+                let height = 6 + (lit ? (level - threshold) * 64 : 0)
+                Capsule()
+                    .fill(lit ? Palette.sunsetDeep : Palette.warmDivider)
+                    .frame(width: 5, height: max(6, min(44, height)))
+            }
+        }
+        .frame(height: 44)
+        .animation(.chirpEase(0.08), value: level)
     }
 }

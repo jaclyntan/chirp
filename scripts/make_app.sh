@@ -89,7 +89,28 @@ PLIST
 # Ad-hoc is therefore a hard failure, not a silent fallback: one ad-hoc
 # build is enough to invalidate a grant recorded against the certificate.
 if security find-identity -v -p codesigning 2>/dev/null | grep -q "Chirp Dev"; then
-    codesign --force --sign "Chirp Dev" "$APP"
+    # Captured rather than streamed, so a failure can be explained instead
+    # of leaving the bundle half-signed with a bare `errSecInternalComponent`
+    # — which is codesign's way of saying "the keychain wouldn't let me use
+    # that key", and says nothing about the one command that fixes it.
+    if ! SIGN_OUTPUT=$(codesign --force --sign "Chirp Dev" "$APP" 2>&1); then
+        echo "$SIGN_OUTPUT" >&2
+        if echo "$SIGN_OUTPUT" | grep -q "errSecInternalComponent"; then
+            cat >&2 <<'HELP'
+
+ERROR: the keychain refused codesign access to the 'Chirp Dev' key.
+
+The bundle is now UNSIGNED — do not ship or rely on it until this is
+fixed and the build is re-run. Authorise the key, then build again:
+
+  security set-key-partition-list -S apple-tool:,apple:,codesign:       -s -l "Chirp Dev" ~/Library/Keychains/login.keychain-db
+
+It prompts for your login-keychain password (twice). This has to be a
+real terminal — it cannot be answered from a script.
+HELP
+        fi
+        exit 1
+    fi
     echo "Signed with 'Chirp Dev'."
 else
     echo "ERROR: signing identity 'Chirp Dev' not found." >&2
