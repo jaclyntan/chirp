@@ -69,12 +69,21 @@ already destroyed a transcript history once.
 ```bash
 .build/debug/Chirp --selftest                       # formatter + learning tests
 .build/debug/Chirp --transcribe audio.wav
+.build/debug/Chirp --live-preview audio.wav         # live transcript, no mic needed
+
 .build/debug/Chirp --format "um hello new line hi"  # cleanup pipeline only
 .build/debug/Chirp --transform "fix this grammer"   # on-device LLM polish
 ```
 
 These are the only automated tests in the repo. There is no XCTest suite;
 `--selftest` is the regression net for the text pipeline.
+
+`--live-preview` exists because the live transcript is otherwise
+untestable without speaking into a microphone — which is how a change to
+`AudioRecorder` once broke it invisibly (buffers arrived, the model ran,
+nothing decoded, and the recording itself still transcribed fine). Feed
+it real speech: `say -o /tmp/t.aiff "..."` then
+`afconvert -f WAVE -d LEI16@48000 -c 1 /tmp/t.aiff /tmp/t.wav`.
 
 ## Releasing
 
