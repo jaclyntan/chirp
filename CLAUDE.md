@@ -25,8 +25,9 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift build
 |---|---|
 | `swift build` | Debug binary at `.build/debug/Chirp`. Fast; use while iterating. |
 | `./scripts/make_app.sh` | Release build, assembles and signs `build/Chirp.app`. **Required to actually run the app** — see below. |
-| `./scripts/make_release.sh` | Notarisable release artifact. |
-| `./scripts/make_icon.sh` | Regenerates `Resources/Chirp.icns` from the SVG. |
+| `./scripts/make_release.sh` | Wraps `build/Chirp.app` into `build/Chirp-<version>.dmg`. Self-signed, **not notarised** — see "Signing and what it does not do" below. |
+| `./scripts/make_icon_master.py` | Regenerates `Resources/ChirpMascot.png` (the icon master) from the pet sprite and the brand field colour sampled from `Resources/Promo/`. |
+| `./scripts/make_icon.sh` | Regenerates `Resources/Chirp.icns` from `Resources/ChirpMascot.png`. |
 | `./scripts/build_harper.sh` | Rebuilds the vendored Harper grammar xcframework from `Vendor/harper-ffi`. |
 
 ### Why you can't just run the bare binary
@@ -201,3 +202,11 @@ its trigger out loud, so a preset that doesn't suit you costs nothing.
   `PetPanelController.resize(to:)` solves the frame from the bird's own
   top edge and centre so the pill can grow below it and the transcript
   bubble above it without the bird appearing to move.
+- **`AudioRecorder`'s device pin looks redundant but isn't**: it calls
+  `AudioUnitSetProperty(CurrentDevice)` unconditionally on every
+  recording start, even when the unit already reports that device.
+  Skipping the redundant call was tried as a latency fix and silently
+  broke the live preview — buffers still arrived and the model still
+  ran, but decoded to nothing, while the recording itself kept working.
+  See that file's own comment before touching it again, and verify any
+  change with `--live-preview` (below), not just a normal dictation.

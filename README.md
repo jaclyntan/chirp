@@ -4,45 +4,77 @@
 
 **Private voice dictation for macOS — everything runs on your Mac.**
 
-Hold `fn`, speak, release. Clean text appears at your cursor in any app.
+Hold your dictation key, speak, release. Clean text appears at your cursor
+in any app.
 No cloud, no account, no subscription, no word limits.
 
 ## Install
 
-Download the latest `Chirp.dmg` from
-[Releases](https://github.com/jaclyntan/chirp/releases/latest), open it,
-and drag Chirp to Applications.
+No terminal, no Xcode, nothing technical — just these steps:
 
-**The first launch needs one extra step.** Chirp is signed with a
-self-signed certificate rather than a paid Apple Developer ID, so macOS
-will refuse to open it normally and may claim it is "damaged". It isn't —
-that's just what macOS says about any app it can't trace to a paid
-developer account.
+1. Go to [Releases](https://github.com/jaclyntan/chirp/releases/latest)
+   and click **Chirp-\<version\>.dmg** to download it.
+2. Open the downloaded file. A window appears with the Chirp icon and a
+   shortcut to your Applications folder.
+3. Drag the Chirp icon onto the Applications shortcut. That's the install
+   — you can close the window now.
 
-1. Right-click (or Control-click) Chirp in Applications → **Open**.
-2. Click **Open** again in the dialog.
+**The first time you open Chirp, macOS will get suspicious of it —
+that's expected, and there's a one-time trick to get past it:**
 
-You only do this once. If the right-click route doesn't offer Open, go to
-**System Settings → Privacy & Security**, scroll down, and click **Open
-Anyway** next to the message about Chirp.
+Chirp isn't signed with a paid Apple developer certificate (that costs
+$99/year, and this is a free hobby project), so macOS treats it the way
+it treats any app it doesn't recognise: it refuses to open and may even
+say the app is "damaged". It isn't damaged — that warning is generic and
+appears for any app from outside the App Store that isn't paid-certified.
 
-Chirp then asks for two permissions:
+To open it anyway, **do this once**:
 
-- **Microphone** — to hear you.
-- **Accessibility** — to watch for the global hotkey and paste the result.
-  Without it, transcripts are copied to your clipboard instead of typed.
+1. Open your **Applications** folder and find Chirp.
+2. **Right-click** (or hold Control and click) on Chirp, then choose
+   **Open** from the menu that appears. Don't just double-click it — that
+   triggers the warning again.
+3. A dialog pops up saying macOS can't verify the developer. Click
+   **Open** on that dialog too.
 
-Chirp lives in the menu bar and has no Dock icon. Click the menu-bar icon
-or the floating wren to open the window.
+Chirp will now open normally, and every time after this you can just
+double-click it like any other app.
+
+*If step 2's menu doesn't offer "Open":* go to **System Settings →
+Privacy & Security**, scroll down to the message about Chirp being
+blocked, and click **Open Anyway** there instead.
+
+### The first launch
+
+Chirp will ask for two permissions — click **Allow** for both when
+prompted:
+
+- **Microphone**, so it can hear you.
+- **Accessibility**, so it can notice when you hold the dictation key and
+  type your words into whatever app you're using. Without this, Chirp
+  still works, but it copies text to your clipboard instead of typing it
+  for you, so you'd need to press ⌘V yourself each time.
+
+A short welcome guide walks you through choosing a dictation key and
+testing your microphone.
+
+**One thing that surprises people:** Chirp has no icon in the Dock and no
+window that stays open — it lives quietly in the menu bar at the top of
+your screen. To open its window again later, click its icon in the menu
+bar, or click the small animated bird that floats on your desktop.
 
 ### Requirements
 
-macOS 26 (Tahoe) or newer, on an Apple Silicon Mac.
+- A Mac with an Apple Silicon chip (M1, M2, M3, or M4 — any Mac bought
+  from late 2020 onward almost certainly has one; check under the Apple
+  menu → About This Mac if you're not sure).
+- macOS 26 (Tahoe) or newer.
 
 ## What it does
 
-- **Push-to-talk** — hold `fn` (or right ⌥) anywhere; release to paste at
-  your cursor. Double-tap for hands-free.
+- **Push-to-talk** — hold your dictation key anywhere; release to paste at
+  your cursor. `fn` (Globe) by default, or pick Right Option, Right Command,
+  Right Control, or Right Shift instead. Double-tap for hands-free.
 - **On-device recognition** — Apple's SpeechAnalyzer. Instant, no model
   download, works offline.
 - **Cleanup** — removes filler words, handles spoken "new line" and "new
