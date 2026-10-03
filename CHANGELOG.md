@@ -1,5 +1,27 @@
 # Changelog
 
+## v1.1.1 — 2026-10-03
+
+### Improved
+
+- Lower background CPU usage: bird animations update a native image layer
+  using cached bitmaps, instead of rebuilding SwiftUI views on each frame.
+- Sprite animations pause when their windows are hidden or covered, including
+  when the floating pet is disabled. Visible animation, hover, and dragging
+  keep their existing behavior.
+- Permission checks skip the hidden main window and no longer publish
+  unchanged values. Permissions refresh when the window becomes visible.
+- Global shortcuts skip unnecessary event conversion for unrelated keys.
+- Meeting detection avoids redundant view updates and allows macOS to
+  coalesce its timer wakeups.
+
+### Fixed
+
+- A slow browser-tab check no longer temporarily clears an existing meeting
+  match when the next polling interval arrives.
+- Resuming a completed activation animation no longer repeats its completion
+  callback.
+
 ## v1.1.0 — 2026-09-19
 
 ### New

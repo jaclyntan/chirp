@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 /// Mirrors `Resources/Pet/pet_sprites.json`'s shape exactly — see that
@@ -29,6 +30,7 @@ private struct PetSpriteManifest: Codable {
 enum PetSpriteStore {
     private static let manifest: PetSpriteManifest? = loadManifest()
     private static var frameCache: [String: [NSImage]] = [:]
+    private static var rasterCache: [ObjectIdentifier: CGImage] = [:]
 
     /// Packaged `.app`: Pet assets live under `Contents/Resources/Pet` —
     /// `Bundle.main` resolves that. SwiftPM's `Bundle.module` accessor
@@ -62,6 +64,15 @@ enum PetSpriteStore {
         return images
     }
 
+    /// Convert each sprite once; the layer can reuse its bitmap directly.
+    static func raster(for image: NSImage) -> CGImage? {
+        let key = ObjectIdentifier(image)
+        if let cached = rasterCache[key] { return cached }
+        guard let raster = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
+        rasterCache[key] = raster
+        return raster
+    }
+
     /// Seconds, not milliseconds — converted once here so call sites
     /// never juggle the unit.
     static func frameDurations(for state: String) -> [TimeInterval] {
@@ -84,8 +95,10 @@ enum PetSpriteStore {
 final class PetAnimator: ObservableObject {
     @Published private(set) var currentFrame: NSImage?
 
+    private(set) var paused = true
     private var state = ""
     private var frameIndex = 0
+    private var finished = false
     private var pendingAdvance: DispatchWorkItem?
     private var onFinished: (() -> Void)?
 
@@ -94,9 +107,18 @@ final class PetAnimator: ObservableObject {
         pendingAdvance?.cancel()
         state = newState
         frameIndex = 0
+        finished = false
         self.onFinished = onFinished
         showCurrentFrame()
         scheduleAdvance()
+    }
+
+    func setPaused(_ value: Bool) {
+        guard paused != value else { return }
+        paused = value
+        pendingAdvance?.cancel()
+        pendingAdvance = nil
+        if !paused { scheduleAdvance() }
     }
 
     private func showCurrentFrame() {
@@ -106,6 +128,7 @@ final class PetAnimator: ObservableObject {
     }
 
     private func scheduleAdvance() {
+        guard !paused, !finished else { return }
         let durations = PetSpriteStore.frameDurations(for: state)
         guard durations.indices.contains(frameIndex) else { return }
         let item = DispatchWorkItem { [weak self] in self?.advance() }
@@ -119,7 +142,10 @@ final class PetAnimator: ObservableObject {
         if frameIndex >= frameCount {
             guard PetSpriteStore.loops(state) else {
                 frameIndex = max(0, frameCount - 1)
-                onFinished?()
+                finished = true
+                let completion = onFinished
+                onFinished = nil
+                completion?()
                 return
             }
             frameIndex = 0
@@ -139,20 +165,104 @@ struct AnimatedWrenView: View {
     let state: String
     var size: CGFloat = 72
 
-    @StateObject private var animator = PetAnimator()
+    @State private var animator = PetAnimator()
 
     var body: some View {
-        Group {
-            if let frame = animator.currentFrame {
-                Image(nsImage: frame)
-                    .interpolation(.none)
-                    .resizable()
-                    .frame(width: size, height: size)
-            } else {
-                Color.clear.frame(width: size, height: size)
+        PetSpriteFrameView(animator: animator, size: size)
+            .onAppear { animator.play(state) }
+            .onChange(of: state) { _, newValue in animator.play(newValue) }
+    }
+}
+
+/// Sprite ticks update a native layer directly instead of invalidating a
+/// SwiftUI view graph. SwiftUI still controls size, hover, and mirroring.
+struct PetSpriteFrameView: View {
+    let animator: PetAnimator
+    let size: CGFloat
+
+    var body: some View {
+        NativeSpriteView(animator: animator)
+            .frame(width: size, height: size)
+    }
+}
+
+private struct NativeSpriteView: NSViewRepresentable {
+    let animator: PetAnimator
+
+    func makeNSView(context: Context) -> SpriteView {
+        let view = SpriteView()
+        view.bind(animator)
+        return view
+    }
+
+    func updateNSView(_ nsView: SpriteView, context: Context) {
+        if nsView.animator !== animator { nsView.bind(animator) }
+    }
+
+    static func dismantleNSView(_ nsView: SpriteView, coordinator: ()) {
+        nsView.stopObserving()
+        nsView.frames = nil
+    }
+
+    final class SpriteView: NSView {
+        weak var animator: PetAnimator?
+        fileprivate var frames: AnyCancellable?
+        private var observer: NSObjectProtocol?
+        private var raster: CGImage?
+
+        // The image is decorative; enclosing SwiftUI controls own clicks,
+        // hover, and dragging, just as they did with the SwiftUI Image.
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        override var wantsUpdateLayer: Bool { true }
+
+        func bind(_ animator: PetAnimator) {
+            self.animator?.setPaused(true)
+            self.animator = animator
+            wantsLayer = true
+            layer?.contentsGravity = .resizeAspect
+            layer?.magnificationFilter = .nearest
+            layer?.minificationFilter = .nearest
+            frames = animator.$currentFrame.sink { [weak self] frame in
+                guard let self else { return }
+                self.raster = frame.flatMap(PetSpriteStore.raster(for:))
+                self.updateLayer()
             }
+            refreshVisibility()
         }
-        .onAppear { animator.play(state) }
-        .onChange(of: state) { _, newValue in animator.play(newValue) }
+
+        override func updateLayer() {
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            layer?.contents = raster
+            CATransaction.commit()
+        }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            stopObserving()
+            guard let window else { return }
+            observer = NotificationCenter.default.addObserver(
+                forName: NSWindow.didChangeOcclusionStateNotification,
+                object: window, queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in self?.refreshVisibility() }
+            }
+            Task { @MainActor [weak self] in self?.refreshVisibility() }
+        }
+
+        private func refreshVisibility() {
+            animator?.setPaused(window?.occlusionState.contains(.visible) != true)
+        }
+
+        func stopObserving() {
+            if let observer { NotificationCenter.default.removeObserver(observer) }
+            observer = nil
+            animator?.setPaused(true)
+        }
+
+        deinit {
+            if let observer { NotificationCenter.default.removeObserver(observer) }
+        }
     }
 }

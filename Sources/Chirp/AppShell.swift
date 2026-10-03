@@ -137,7 +137,7 @@ private struct ChirpLogoBadge: View {
         AnimatedWrenView(state: state, size: 32)
             .onChange(of: app.uiState) { _, newValue in state = base(for: newValue) }
             .onReceive(songTimer) { _ in
-                guard app.uiState == .idle, state == "idle", Bool.random() else { return }
+                guard app.mainWindowVisible, app.uiState == .idle, state == "idle", Bool.random() else { return }
                 state = "chirp"
                 Task {
                     try? await Task.sleep(nanoseconds: 700_000_000)
@@ -195,7 +195,9 @@ struct AppShellRoot: View {
         .animation(.chirpEase(0.2), value: app.lastError)
         .background(Palette.panel)
         .ignoresSafeArea()
-        .onReceive(permissionTimer) { _ in app.refreshPermissions() }
+        .onReceive(permissionTimer) { _ in
+            if app.mainWindowVisible { app.refreshPermissions() }
+        }
         .onChange(of: pinned) { _, newValue in Settings.railPinned = newValue }
         // Outside triggers — the App Profile discovery notification, and
         // the nav bar HUD's quick-action popovers — jump the shown page

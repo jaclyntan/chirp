@@ -556,7 +556,7 @@ private struct PetView: View {
     /// arrives).
     let onWander: (@escaping (PetTravel, Bool) -> Void, @escaping () -> Void) -> Void
 
-    @StateObject private var animator = PetAnimator()
+    @State private var animator = PetAnimator()
     @State private var hovering = false
     @State private var facingLeft = false
     @State private var isWandering = false
@@ -733,7 +733,7 @@ private struct PetView: View {
             // `!hovering` too — the deliberate `hover` reaction below
             // shouldn't get interrupted by a random idle variant if this
             // fires mid-hover.
-            guard app.uiState == .idle, !isWandering, !hovering else { return }
+            guard !animator.paused, app.uiState == .idle, !isWandering, !hovering else { return }
             let next = Self.idleVariants.randomElement() ?? "idle"
             animator.play(next)
         }
@@ -741,7 +741,7 @@ private struct PetView: View {
             // `!pinned` here as well as in the controller's own `wander`
             // guard — without it a pinned pet still visibly plays its
             // walk cycle on the spot before the no-op glide completes.
-            guard app.uiState == .idle, !isWandering, !hovering, !pinned,
+            guard !animator.paused, app.uiState == .idle, !isWandering, !hovering, !pinned,
                   bubbleText == nil,
                   Bool.random() && Bool.random()  // ~1 in 3
             else { return }
@@ -1150,16 +1150,7 @@ private struct PetView: View {
     /// legible against arbitrary desktop backgrounds, without needing
     /// anything this view adds on top.
     private var wrenSprite: some View {
-        Group {
-            if let frame = animator.currentFrame {
-                Image(nsImage: frame)
-                    .interpolation(.none) // crisp pixel scaling, no smoothing blur
-                    .resizable()
-                    .frame(width: 64, height: 64)
-            } else {
-                Color.clear.frame(width: 64, height: 64)
-            }
-        }
+        PetSpriteFrameView(animator: animator, size: 64)
         // `x` carries both the hover-scale and the facing mirror in one
         // transform — `wren_walk`'s frames are drawn facing right only
         // (per PET_BRIEF.md/Resources/Pet/README.md), so a leftward

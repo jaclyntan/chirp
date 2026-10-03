@@ -21,6 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Obse
     @Published var uiState: UIState = .idle { didSet { updateIcon(); updateHUD() } }
     @Published var isHandsFree = false { didSet { updateHUD() } }
     @Published var entries: [HistoryEntry] = []
+    @Published private(set) var mainWindowVisible = false
     @Published var micAuthorized = false
     @Published var axTrusted = false
     @Published var hotkey: HotkeyMonitor.Hotkey = Settings.hotkey
@@ -362,6 +363,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Obse
         }
     }
 
+    // Suspend decorative work and permission checks when the window is hidden.
+    func windowDidChangeOcclusionState(_ notification: Notification) {
+        guard let changedWindow = notification.object as? NSWindow,
+              changedWindow === window else { return }
+        let visible = changedWindow.occlusionState.contains(.visible)
+        if mainWindowVisible != visible { mainWindowVisible = visible }
+        if visible { refreshPermissions() }
+    }
+
     // AppKit re-lays out the titlebar on these, undoing the alignment.
     func windowDidResize(_ notification: Notification) { alignTrafficLights() }
     func windowDidExitFullScreen(_ notification: Notification) { alignTrafficLights() }
@@ -371,13 +381,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Obse
 
     func refreshPermissions(promptAccessibility: Bool = false) {
         let wasTrusted = axTrusted
+        let trusted: Bool
         if promptAccessibility {
             let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
-            axTrusted = AXIsProcessTrustedWithOptions(options as CFDictionary)
+            trusted = AXIsProcessTrustedWithOptions(options as CFDictionary)
         } else {
-            axTrusted = AXIsProcessTrusted()
+            trusted = AXIsProcessTrusted()
         }
-        micAuthorized = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+        if axTrusted != trusted { axTrusted = trusted }
+        let microphoneAllowed = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+        if micAuthorized != microphoneAllowed { micAuthorized = microphoneAllowed }
         // A `CGEvent` tap can't be created without Accessibility, so a
         // shortcut switched on before the permission was granted silently
         // did nothing until the next relaunch. Start the taps the moment

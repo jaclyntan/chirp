@@ -53,9 +53,12 @@ final class ConsumingHotkeyMonitor {
             return MainActor.assumeIsolated { () -> Unmanaged<CGEvent>? in
                 let wanted = monitor.combination()
                 let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
+                // Most keys are unrelated to this shortcut. Avoid creating
+                // an NSEvent just to discard it immediately afterwards.
+                guard keyCode == wanted.keyCode else { return Unmanaged.passUnretained(event) }
                 let modifiers = NSEvent(cgEvent: event)?.modifierFlags
                     .intersection([.command, .option, .control, .shift]) ?? []
-                guard keyCode == wanted.keyCode, modifiers == wanted.modifiers else {
+                guard modifiers == wanted.modifiers else {
                     return Unmanaged.passUnretained(event)
                 }
                 monitor.onTrigger?()

@@ -129,6 +129,7 @@ final class MeetingDetector: ObservableObject {
         pollTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refresh() }
         }
+        pollTimer?.tolerance = 0.6
     }
 
     func stopWatching() {
@@ -138,22 +139,20 @@ final class MeetingDetector: ObservableObject {
 
     private func refresh() {
         guard let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier else {
-            activeMeetingApp = nil
-            activeMeetingServiceName = nil
+            updateMeeting(app: nil, service: nil)
             return
         }
         if let native = MeetingApp.allCases.first(where: { $0.rawValue == bundleID && !$0.isBrowser }) {
-            activeMeetingApp = native
-            activeMeetingServiceName = nil
+            updateMeeting(app: native, service: nil)
             return
         }
-        guard Settings.browserMeetingDetectionEnabled, !checkingBrowserTab,
+        guard Settings.browserMeetingDetectionEnabled,
               let browser = MeetingApp.allCases.first(where: { $0.rawValue == bundleID && $0.isBrowser })
         else {
-            activeMeetingApp = nil
-            activeMeetingServiceName = nil
+            updateMeeting(app: nil, service: nil)
             return
         }
+        guard !checkingBrowserTab else { return }
         checkingBrowserTab = true
         Task.detached(priority: .utility) { [weak self] in
             let url = BrowserTabReader.activeTabURL(for: browser)
@@ -166,14 +165,17 @@ final class MeetingDetector: ObservableObject {
                 // trusting the value this Task started with.
                 guard NSWorkspace.shared.frontmostApplication?.bundleIdentifier == browser.rawValue else { return }
                 if let service {
-                    self.activeMeetingApp = browser
-                    self.activeMeetingServiceName = service
+                    self.updateMeeting(app: browser, service: service)
                 } else {
-                    self.activeMeetingApp = nil
-                    self.activeMeetingServiceName = nil
+                    self.updateMeeting(app: nil, service: nil)
                 }
             }
         }
+    }
+
+    private func updateMeeting(app: MeetingApp?, service: String?) {
+        if activeMeetingApp != app { activeMeetingApp = app }
+        if activeMeetingServiceName != service { activeMeetingServiceName = service }
     }
 
     // MARK: - Calendar (best-effort titling only)
