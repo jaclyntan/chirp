@@ -169,6 +169,8 @@ Recognition engines trialled and removed (WhisperKit, whisper.cpp,
 Parakeet) are written up in
 [docs/removed-engines.md](docs/removed-engines.md).
 [CHANGELOG.md](CHANGELOG.md) covers what changed in each release.
+[Performance notes](docs/performance.md) describe memory limits, lightweight
+defaults, and verification on entry-level Macs.
 
 ## Credits
 

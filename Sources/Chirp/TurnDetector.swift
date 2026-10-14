@@ -16,6 +16,10 @@ final class TurnDetector {
     private let vadEngine: VadEngine
     private let converter = AudioConverter()
 
+    private var active = false
+    private var generation = 0
+    private var draining = false
+    private var queue = AudioBufferQueue()
     private var state: VadStreamState?
     private var accumulator: [Float] = []
     private var speechStartSample: Int?
@@ -47,6 +51,10 @@ final class TurnDetector {
     /// itself is lazily fetched on the first `ingest` call instead of here,
     /// so there's no race between this and that first call.
     func start() {
+        generation += 1
+        active = true
+        vadEngine.beginStreaming()
+        queue.removeAll()
         state = nil
         accumulator = []
         speechStartSample = nil
@@ -54,22 +62,52 @@ final class TurnDetector {
     }
 
     func stop() {
+        generation += 1
+        active = false
+        vadEngine.endStreaming()
+        queue.removeAll()
         state = nil
         accumulator = []
         speechStartSample = nil
+    }
+
+    /// One drain owns the stream state. A Task per buffer used to reenter
+    /// VAD across awaits, processing stale states concurrently.
+    func enqueue(_ buffer: AVAudioPCMBuffer) {
+        guard active, !hasFiredThisSession else { return }
+        guard queue.append(buffer) else {
+            // Fail open: manual stop and the full recording still work.
+            stop()
+            return
+        }
+        startDrainIfNeeded()
+    }
+
+    private func startDrainIfNeeded() {
+        guard active, !draining, !queue.isEmpty else { return }
+        draining = true
+        Task {
+            while active, let buffer = queue.popFirst() {
+                await ingest(buffer, session: generation)
+            }
+            draining = false
+        }
     }
 
     /// Fails silent on any problem — model not ready, a conversion or
     /// processing error — leaving auto-stop simply inactive for this
     /// session rather than risking a bad state. Manual double-tap-to-stop
     /// is never affected either way.
-    func ingest(_ buffer: AVAudioPCMBuffer) async {
-        guard !hasFiredThisSession, let manager = await vadEngine.loadedManager()
+    private func ingest(_ buffer: AVAudioPCMBuffer, session: Int) async {
+        guard active, !hasFiredThisSession, let manager = await vadEngine.loadedManager()
         else { return }
-        guard let samples = try? converter.resampleBuffer(buffer) else { return }
+        guard active, session == generation,
+              let samples = try? converter.resampleBuffer(buffer) else { return }
 
         if state == nil {
-            state = await manager.makeStreamState()
+            let initialState = await manager.makeStreamState()
+            guard active, session == generation else { return }
+            state = initialState
         }
         guard var currentState = state else { return }
         accumulator.append(contentsOf: samples)
@@ -78,9 +116,10 @@ final class TurnDetector {
             let chunk = Array(accumulator.prefix(VadManager.chunkSize))
             accumulator.removeFirst(VadManager.chunkSize)
 
-            guard let result = try? await manager.processStreamingChunk(
+            let result = try? await manager.processStreamingChunk(
                 chunk, state: currentState, config: segmentationConfig)
-            else { continue }
+            guard active, session == generation else { return }
+            guard let result else { continue }
             currentState = result.state
 
             if let event = result.event {
@@ -94,6 +133,7 @@ final class TurnDetector {
                     speechStartSample = nil
                     if sustainedSeconds >= minimumTriggeredDuration {
                         hasFiredThisSession = true
+                        queue.removeAll()
                         state = currentState
                         onTurnEnd?()
                         return

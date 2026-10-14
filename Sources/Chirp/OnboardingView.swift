@@ -30,11 +30,6 @@ struct OnboardingRoot: View {
     /// Latches once the mic has clearly picked up speech. Latched, not
     /// live, so the confirmation doesn't blink on and off between words.
     @State private var micHeard = false
-    /// Polls while onboarding is on screen. Faster than the main
-    /// window's 5s: this is the one moment the user is actively waiting
-    /// for a permission to flip, rather than a background check.
-    private let permissionTimer = Timer.publish(
-        every: 1.5, on: .main, in: .common).autoconnect()
     /// Drives the small wren next to the permissions step's own header —
     /// see `celebratePermissionGrant()`.
     @State private var permissionWrenState = "idle"
@@ -73,6 +68,9 @@ struct OnboardingRoot: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Palette.paper)
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.willSleepNotification)) { _ in
+            stopMicTest()
+        }
     }
 
     // MARK: - Chrome
@@ -267,7 +265,14 @@ struct OnboardingRoot: View {
             for: NSApplication.didBecomeActiveNotification)) { _ in
             app.refreshPermissions()
         }
-        .onReceive(permissionTimer) { _ in app.refreshPermissions() }
+        .task(id: app.activity.suspendsAmbientWork) {
+            guard !app.activity.suspendsAmbientWork else { return }
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .milliseconds(1500)) }
+                catch { return }
+                app.refreshPermissions()
+            }
+        }
     }
 
     /// A one-shot "activated" hop the instant either permission is

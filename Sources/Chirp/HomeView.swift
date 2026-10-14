@@ -112,7 +112,7 @@ struct HomePage: View {
                     PulsingDot(
                         color: app.uiState == .idle
                             ? Palette.warmInkFainter : Palette.sunsetDeep,
-                        size: 6, maxScale: 2.2, active: app.uiState != .idle)
+                        size: 6, maxScale: 2.2, active: app.uiState != .idle && app.mainWindowVisible && !app.activity.suspendsAmbientWork && !app.activity.reducesMotion)
                     Text(captureSubhead)
                         .font(.manrope(12.5))
                         .foregroundStyle(Palette.warmInkSoft)
@@ -134,7 +134,7 @@ struct HomePage: View {
             // Only moves while something is actually being captured —
             // a waveform that animates forever on an idle screen is
             // decoration pretending to be feedback.
-            HeroCaptureWaveform(active: app.uiState != .idle)
+            HeroCaptureWaveform(active: app.uiState != .idle && app.mainWindowVisible && !app.activity.suspendsAmbientWork && !app.activity.reducesMotion)
         }
         .padding(.top, 4)
         .padding(.bottom, 4)

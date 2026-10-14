@@ -556,7 +556,7 @@ private struct PetView: View {
     /// arrives).
     let onWander: (@escaping (PetTravel, Bool) -> Void, @escaping () -> Void) -> Void
 
-    @State private var animator = PetAnimator()
+    @State private var animator = PetAnimator(repeatsIdleAnimations: false)
     @State private var hovering = false
     @State private var facingLeft = false
     @State private var isWandering = false
@@ -635,15 +635,14 @@ private struct PetView: View {
     /// fourth idle flavor rather than a separate, unbuilt "wanders the
     /// screen" behavior.
     private static let idleVariants = ["idle", "idle_preen", "idle_tailflick", "hop"]
-    private let idleVarietyTimer = Timer.publish(every: 6, on: .main, in: .common).autoconnect()
+    // Ambient animation plays once every six seconds, then rests. A
+    // hidden pet has no timer; wandering shares this same occasional tick.
+    @State private var lastWanderCheck = Date()
 
-    /// Checked every 20s but only actually wanders about a third of the
-    /// time (`Settings.petWanders` gates the feature entirely on top of
-    /// this) — a hard 20s interval reads as mechanical and would be
-    /// distracting at that cadence; the random skip spreads real
-    /// relocations out to roughly once a minute on average instead,
-    /// without needing a genuinely random-interval timer.
-    private let wanderTimer = Timer.publish(every: 20, on: .main, in: .common).autoconnect()
+    private var ambientSuspended: Bool {
+        app.activity.suspendsAmbientWork ||
+            (app.activity.reducesMotion && app.uiState == .idle && !hovering)
+    }
 
     var body: some View {
         VStack(spacing: 6) {
@@ -729,23 +728,19 @@ private struct PetView: View {
                 startedFromPill = false
             }
         }
-        .onReceive(idleVarietyTimer) { _ in
-            // `!hovering` too — the deliberate `hover` reaction below
-            // shouldn't get interrupted by a random idle variant if this
-            // fires mid-hover.
-            guard !animator.paused, app.uiState == .idle, !isWandering, !hovering else { return }
-            let next = Self.idleVariants.randomElement() ?? "idle"
-            animator.play(next)
-        }
-        .onReceive(wanderTimer) { _ in
-            // `!pinned` here as well as in the controller's own `wander`
-            // guard — without it a pinned pet still visibly plays its
-            // walk cycle on the spot before the no-op glide completes.
-            guard !animator.paused, app.uiState == .idle, !isWandering, !hovering, !pinned,
-                  bubbleText == nil,
-                  Bool.random() && Bool.random()  // ~1 in 3
-            else { return }
-            beginWander()
+        .task(id: animator.paused) {
+            guard !animator.paused else { return }
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .seconds(6)) }
+                catch { return }
+                guard !animator.paused, app.uiState == .idle, !isWandering, !hovering else { continue }
+                animator.play(Self.idleVariants.randomElement() ?? "idle")
+                if Settings.petWanders, !pinned, bubbleText == nil,
+                   Date().timeIntervalSince(lastWanderCheck) >= 20 {
+                    lastWanderCheck = Date()
+                    if Bool.random() && Bool.random() { beginWander() }
+                }
+            }
         }
         .onChange(of: app.livePreviewText) { _, newValue in
             guard bubbleIsLive else { return }
@@ -764,7 +759,11 @@ private struct PetView: View {
             guard let newValue, !newValue.isEmpty else { return }
             showErrorBubble(newValue)
         }
-        .onAppear { animator.play(baseState(for: app.uiState)) }
+        .onChange(of: ambientSuspended) { _, value in animator.setSuspended(value) }
+        .onAppear {
+            animator.setSuspended(ambientSuspended)
+            animator.play(baseState(for: app.uiState))
+        }
     }
 
     /// Grows the capsule from the resting line into the full pill: height

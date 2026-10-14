@@ -57,7 +57,9 @@ final class MeetingAudioCapture: NSObject, @unchecked Sendable {
 
     func start(bundleID: String) async throws {
         guard !isCapturing else { return }
+        try Task.checkCancellation()
         let content = try await SCShareableContent.current
+        try Task.checkCancellation()
         guard let app = content.applications.first(where: { $0.bundleIdentifier == bundleID })
         else { throw CaptureError.appNotRunning }
         guard let display = content.displays.first else { throw CaptureError.noDisplay }
@@ -93,6 +95,11 @@ final class MeetingAudioCapture: NSObject, @unchecked Sendable {
         let newStream = SCStream(filter: filter, configuration: config, delegate: nil)
         try newStream.addStreamOutput(self, type: .audio, sampleHandlerQueue: captureQueue)
         try await newStream.startCapture()
+        if Task.isCancelled {
+            try? await newStream.stopCapture()
+            try? FileManager.default.removeItem(at: url)
+            throw CancellationError()
+        }
 
         captureQueue.sync {
             self.stream = newStream

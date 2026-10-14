@@ -121,8 +121,6 @@ private struct ChirpLogoBadge: View {
 
     @State private var state = "idle"
 
-    private let songTimer = Timer.publish(every: 11, on: .main, in: .common).autoconnect()
-
     /// Not a static mark — the same bird, reacting to the same states the
     /// floating pet does. With the pet turned off this is the only wren
     /// on screen, so it's the only thing that shows a dictation is live
@@ -134,13 +132,20 @@ private struct ChirpLogoBadge: View {
     /// rather than a loop — this sits in the corner of every page, so a
     /// bird chirping continuously here would be genuinely irritating.
     var body: some View {
-        AnimatedWrenView(state: state, size: 32)
+        AnimatedWrenView(state: state, size: 32,
+                         suspended: app.activity.suspendsAmbientWork ||
+                            (app.activity.reducesMotion && app.uiState == .idle))
             .onChange(of: app.uiState) { _, newValue in state = base(for: newValue) }
-            .onReceive(songTimer) { _ in
-                guard app.mainWindowVisible, app.uiState == .idle, state == "idle", Bool.random() else { return }
-                state = "chirp"
-                Task {
-                    try? await Task.sleep(nanoseconds: 700_000_000)
+            .task(id: app.mainWindowVisible && !app.activity.suspendsAmbientWork && !app.activity.reducesMotion) {
+                guard app.mainWindowVisible, !app.activity.suspendsAmbientWork, !app.activity.reducesMotion else { return }
+                state = base(for: app.uiState)
+                while !Task.isCancelled {
+                    do { try await Task.sleep(for: .seconds(11)) }
+                    catch { return }
+                    guard app.uiState == .idle, state == "idle", Bool.random() else { continue }
+                    state = "chirp"
+                    do { try await Task.sleep(for: .milliseconds(700)) }
+                    catch { return }
                     if app.uiState == .idle { state = "idle" }
                 }
             }
@@ -172,14 +177,6 @@ struct AppShellRoot: View {
     /// Drives `.pane-swap`: a 150ms fade + 3pt rise whenever the page changes.
     @State private var paneSwapping = false
 
-    // Every 2s was polling two system permission checks 30 times a
-    // minute for the entire time the window is open, to catch a change
-    // the user can only make by leaving the app, walking through System
-    // Settings and coming back. 5s still feels instant on return and
-    // cuts the polling by 60%.
-    private let permissionTimer = Timer.publish(
-        every: 5, on: .main, in: .common).autoconnect()
-
     var body: some View {
         // No simulated frame here. The mockup's `.proto-frame` — rounded
         // corners, border, drop shadow, and the gray backdrop around it —
@@ -195,8 +192,13 @@ struct AppShellRoot: View {
         .animation(.chirpEase(0.2), value: app.lastError)
         .background(Palette.panel)
         .ignoresSafeArea()
-        .onReceive(permissionTimer) { _ in
-            if app.mainWindowVisible { app.refreshPermissions() }
+        .task(id: app.mainWindowVisible && !app.activity.suspendsAmbientWork) {
+            guard app.mainWindowVisible, !app.activity.suspendsAmbientWork else { return }
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .seconds(5)) }
+                catch { return }
+                app.refreshPermissions()
+            }
         }
         .onChange(of: pinned) { _, newValue in Settings.railPinned = newValue }
         // Outside triggers — the App Profile discovery notification, and

@@ -104,7 +104,7 @@ final class StatusHUDController {
             hide()
             return
         }
-        model.state = state
+        if model.state != state { model.state = state }
         show()
     }
 
@@ -113,8 +113,9 @@ final class StatusHUDController {
     /// panel per word would make it visibly twitch while you speak.
     func setLiveText(_ text: String) {
         let wasEmpty = model.liveText.isEmpty
+        guard model.liveText != text else { return }
         model.liveText = text
-        guard wasEmpty != text.isEmpty, panel != nil else { return }
+        guard model.state != .hidden, wasEmpty != text.isEmpty, panel != nil else { return }
         show()
     }
 
@@ -141,9 +142,27 @@ final class StatusHUDController {
     }
 
     private func hide() {
+        // Ordering out a panel leaves its SwiftUI tree alive. Remove the
+        // animated subtree too, so the hidden HUD has no display ticks.
+        if model.state != .hidden { model.state = .hidden }
         panel?.orderOut(nil)
         model.targetAppIcon = nil
         model.liveText = ""
+    }
+
+    static func runSelfTest() -> Bool {
+        // No panel or microphone is opened by this state regression.
+        let controller = StatusHUDController()
+        controller.model.state = .recording(handsFree: false)
+        controller.model.liveText = "Fixture"
+        controller.hide()
+        let recordingHidden = controller.model.state == .hidden && controller.model.liveText.isEmpty
+        controller.model.state = .processing("Fixture")
+        controller.hide()
+        let processingHidden = controller.model.state == .hidden
+        let passed = recordingHidden && processingHidden
+        print("\(passed ? "PASS" : "FAIL"): hiding the HUD removes both recording and processing animations")
+        return passed
     }
 
     private func existingOrNewPanel() -> NSPanel {
@@ -210,37 +229,39 @@ private struct StatusHUDView: View {
     @ObservedObject var model: HUDModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if !model.liveText.isEmpty {
-                // Tail-anchored: as the preview grows past the visible
-                // lines you want the newest words, not the oldest. A
-                // top-anchored box would scroll your own speech out of
-                // sight the moment it overflowed.
-                // Styled as visibly provisional — dimmer and italic —
-                // because it is. This is a different, faster model than
-                // the one that produces the real transcript, and it has
-                // had none of the cleanup (punctuation, capitalisation,
-                // filler removal, dictionary, snippets) applied. Set it
-                // like finished text and every difference reads as "it
-                // got that wrong" a second before the correct words
-                // appear; set it like a draft and the same differences
-                // read as "it's still thinking", which is the truth.
-                Text(model.liveText)
-                    .font(.manrope(13).italic())
-                    .foregroundStyle(.white.opacity(0.62))
-                    .lineSpacing(3)
-                    .lineLimit(3)
-                    .truncationMode(.head)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .fixedSize(horizontal: false, vertical: true)
+        if model.state != .hidden {
+            VStack(alignment: .leading, spacing: 10) {
+                if !model.liveText.isEmpty {
+                    // Tail-anchored: as the preview grows past the visible
+                    // lines you want the newest words, not the oldest. A
+                    // top-anchored box would scroll your own speech out of
+                    // sight the moment it overflowed.
+                    // Styled as visibly provisional — dimmer and italic —
+                    // because it is. This is a different, faster model than
+                    // the one that produces the real transcript, and it has
+                    // had none of the cleanup (punctuation, capitalisation,
+                    // filler removal, dictionary, snippets) applied. Set it
+                    // like finished text and every difference reads as "it
+                    // got that wrong" a second before the correct words
+                    // appear; set it like a draft and the same differences
+                    // read as "it's still thinking", which is the truth.
+                    Text(model.liveText)
+                        .font(.manrope(13).italic())
+                        .foregroundStyle(.white.opacity(0.62))
+                        .lineSpacing(3)
+                        .lineLimit(3)
+                        .truncationMode(.head)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                statusRow
             }
-            statusRow
+            .padding(.horizontal, 18)
+            .padding(.vertical, 14)
+            .background(hudShape.fill(Palette.navActivePill))
+            .overlay(hudShape.stroke(.white.opacity(0.14), lineWidth: 1))
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 14)
-        .background(hudShape.fill(Palette.navActivePill))
-        .overlay(hudShape.stroke(.white.opacity(0.14), lineWidth: 1))
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
     }
 
     /// Target-app icon, then a waveform/dots that stretches to fill the

@@ -115,7 +115,9 @@ final class MeetingDetector: ObservableObject {
     @Published private(set) var activeMeetingServiceName: String?
     @Published var calendarAuthorized = EKEventStore.authorizationStatus(for: .event) == .fullAccess
 
-    private let eventStore = EKEventStore()
+    private lazy var eventStore = EKEventStore()
+    private var watching = false
+    private var activationObserver: NSObjectProtocol?
     private var pollTimer: Timer?
     /// Guards against a slow AppleScript call from one poll tick still
     /// running when the next one fires three seconds later — `refresh()`
@@ -124,21 +126,53 @@ final class MeetingDetector: ObservableObject {
     private var checkingBrowserTab = false
 
     func startWatching() {
-        guard pollTimer == nil else { return }
-        refresh()
-        pollTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
+        guard !watching else { return }
+        watching = true
+        activationObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
             Task { @MainActor in self?.refresh() }
         }
-        pollTimer?.tolerance = 0.6
+        refresh()
     }
 
     func stopWatching() {
+        watching = false
+        if let activationObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(activationObserver)
+        }
+        activationObserver = nil
         pollTimer?.invalidate()
         pollTimer = nil
     }
 
+    func settingsDidChange() {
+        if watching { refresh() }
+    }
+
+    /// Native app changes arrive from NSWorkspace. Only an opted-in,
+    /// frontmost browser needs polling to notice a switch between tabs.
+    private func updateBrowserPolling(enabled: Bool) {
+        if !enabled {
+            pollTimer?.invalidate()
+            pollTimer = nil
+        } else if pollTimer == nil {
+            let timer = Timer(timeInterval: 3, repeats: true) { [weak self] _ in
+                Task { @MainActor in self?.refresh() }
+            }
+            timer.tolerance = 1
+            RunLoop.main.add(timer, forMode: .common)
+            pollTimer = timer
+        }
+    }
+
     private func refresh() {
-        guard let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier else {
+        guard watching else { return }
+        let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        let frontmost = MeetingApp.allCases.first { $0.rawValue == bundleID }
+        updateBrowserPolling(enabled: Settings.browserMeetingDetectionEnabled && frontmost?.isBrowser == true)
+        guard let bundleID else {
             updateMeeting(app: nil, service: nil)
             return
         }
@@ -157,20 +191,16 @@ final class MeetingDetector: ObservableObject {
         Task.detached(priority: .utility) { [weak self] in
             let url = BrowserTabReader.activeTabURL(for: browser)
             let service = url.flatMap(MeetingURLMatcher.service(for:))
-            await MainActor.run {
-                guard let self else { return }
-                self.checkingBrowserTab = false
-                // The frontmost app may have changed again by the time
-                // this AppleScript call returns — re-check rather than
-                // trusting the value this Task started with.
-                guard NSWorkspace.shared.frontmostApplication?.bundleIdentifier == browser.rawValue else { return }
-                if let service {
-                    self.updateMeeting(app: browser, service: service)
-                } else {
-                    self.updateMeeting(app: nil, service: nil)
-                }
-            }
+            await self?.finishBrowserCheck(browser: browser, service: service)
         }
+    }
+
+    private func finishBrowserCheck(browser: MeetingApp, service: String?) {
+        checkingBrowserTab = false
+        // Ignore answers from a browser that is no longer frontmost.
+        guard watching, Settings.browserMeetingDetectionEnabled,
+              NSWorkspace.shared.frontmostApplication?.bundleIdentifier == browser.rawValue else { return }
+        updateMeeting(app: service == nil ? nil : browser, service: service)
     }
 
     private func updateMeeting(app: MeetingApp?, service: String?) {

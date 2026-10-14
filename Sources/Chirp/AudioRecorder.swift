@@ -1,3 +1,4 @@
+import Accelerate
 import AVFoundation
 import AudioToolbox
 import CoreAudio
@@ -14,7 +15,85 @@ import Foundation
 final class AudioRecorder {
     private let engine = AVAudioEngine()
 
-    private var file: AVAudioFile?
+    /// Everything the real-time tap callback touches for ONE recording.
+    ///
+    /// The callback runs on Core Audio's thread while `start()`/`stop()` run
+    /// on the main thread. These fields used to live directly on the
+    /// recorder, unguarded, so rapid start/cancel cycles (a few accidental
+    /// taps of the hotkey) let a late callback from a cancelled recording
+    /// race the next one: concurrent access to the same `AVAudioFile`
+    /// reference and counters, and a stale callback could re-create the
+    /// cancelled recording's file and have the new recording write into it.
+    ///
+    /// A session is created per `start()`, captured by that recording's tap
+    /// closure only, and `close()`d by `stop()`. After `close()` returns, no
+    /// callback can write to it, and none can reach a later session.
+    private final class Session {
+        let url: URL
+        private let lock = NSLock()
+        private var file: AVAudioFile?
+        private var closed = false
+        private var frames: AVAudioFramePosition = 0
+        private var signalFrames: AVAudioFramePosition = 0
+        private var format: AVAudioFormat?
+
+        init(url: URL) { self.url = url }
+
+        /// Audio thread. Returns false once the session is closed, so the
+        /// caller drops the buffer instead of forwarding it anywhere.
+        func append(_ buffer: AVAudioPCMBuffer, silenceThreshold: Float) -> Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            guard !closed else { return false }
+            // The file is created from the FIRST buffer's real format, not
+            // the format read before the tap installed — see `start()`.
+            if file == nil {
+                file = try? AVAudioFile(forWriting: url, settings: buffer.format.settings)
+                format = buffer.format
+            }
+            try? file?.write(from: buffer)
+            frames += AVAudioFramePosition(buffer.frameLength)
+            if AudioRecorder.hasSignal(in: buffer, above: silenceThreshold) {
+                signalFrames += AVAudioFramePosition(buffer.frameLength)
+            }
+            return true
+        }
+
+        /// Main thread. Waits out any write in flight, closes the file, and
+        /// returns the totals. Safe to call twice.
+        @discardableResult
+        func close() -> (frames: AVAudioFramePosition,
+                         signalFrames: AVAudioFramePosition,
+                         format: AVAudioFormat?) {
+            lock.lock()
+            defer { lock.unlock() }
+            closed = true
+            file = nil
+            return (frames, signalFrames, format)
+        }
+    }
+
+    /// A closure slot read on the audio thread and replaced on the main
+    /// thread. A Swift closure is two words, so an unguarded read racing a
+    /// write can tear and crash.
+    private final class FeedSlot {
+        private let lock = NSLock()
+        private var handler: ((AVAudioPCMBuffer) -> Void)?
+        var value: ((AVAudioPCMBuffer) -> Void)? {
+            get { lock.lock(); defer { lock.unlock() }; return handler }
+            set {
+                lock.lock()
+                let old = handler
+                handler = newValue
+                lock.unlock()
+                // Released outside the lock: a closure's captured state can
+                // run arbitrary code when it deinitialises.
+                withExtendedLifetime(old) {}
+            }
+        }
+    }
+
+    private var session: Session?
     private(set) var currentFileURL: URL?
     private(set) var isRecording = false
     /// Audio frames actually captured. A recording that ends on zero means
@@ -45,7 +124,6 @@ final class AudioRecorder {
     private(set) var hasSignal = false
     /// Frames whose own buffer cleared the silence floor, summed across
     /// the whole recording (not just whether one ever did).
-    private var signalFrameCount: AVAudioFramePosition = 0
     /// -40dBFS. Comfortably below even quiet speech, comfortably above a
     /// silent room's noise floor — picked to avoid false positives on real
     /// (if soft) speech, not tuned to catch every last whisper.
@@ -65,7 +143,11 @@ final class AudioRecorder {
     /// synchronously from the real-time tap callback below, so whatever's
     /// attached here must return immediately, same as the rest of that
     /// callback — no async work, no blocking.
-    var onLiveBuffer: ((AVAudioPCMBuffer) -> Void)?
+    var onLiveBuffer: ((AVAudioPCMBuffer) -> Void)? {
+        get { liveFeed.value }
+        set { liveFeed.value = newValue }
+    }
+    private let liveFeed = FeedSlot()
 
     /// A second, independent live feed, for the HUD's live-transcript
     /// preview — separate from `onLiveBuffer` because the two run on
@@ -74,7 +156,11 @@ final class AudioRecorder {
     /// slot the way a single property would. Same real-time contract as
     /// `onLiveBuffer`: called synchronously from the tap callback, so
     /// whatever's attached here must return immediately.
-    var onLivePreviewBuffer: ((AVAudioPCMBuffer) -> Void)?
+    var onLivePreviewBuffer: ((AVAudioPCMBuffer) -> Void)? {
+        get { previewFeed.value }
+        set { previewFeed.value = newValue }
+    }
+    private let previewFeed = FeedSlot()
 
     static func requestMicrophoneAccess() async -> Bool {
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
@@ -118,12 +204,15 @@ final class AudioRecorder {
         // no-op, making this the cheap way to guarantee the bus is clear.
         input.removeTap(onBus: 0)
 
-        file = nil
+        // A fresh session per recording: the tap closure below captures THIS
+        // one, never `self`'s current one, so nothing a previous recording's
+        // late callback does can reach this recording's file or counters.
+        let session = Session(url: url)
+        self.session = session
         currentFileURL = url
         capturedFrames = 0
         capturedFormat = nil
         hasSignal = false
-        signalFrameCount = 0
 
         // `format: nil` means "whatever this bus is actually running at".
         //
@@ -151,18 +240,22 @@ final class AudioRecorder {
             // disagreed, every write threw, `try?` swallowed it, and the
             // recording ended up as a header with no audio — a silent
             // failure that looked exactly like the app being broken.
-            if self.file == nil {
-                self.file = try? AVAudioFile(
-                    forWriting: url, settings: buffer.format.settings)
-                self.capturedFormat = buffer.format
+            // (That happens inside `Session.append`.)
+            //
+            // `false` means this recording was already stopped: drop the
+            // buffer rather than forward it to a consumer that belongs to
+            // whatever recording came next.
+            guard session.append(buffer, silenceThreshold: self.silenceRMSThreshold)
+            else { return }
+            // Share one owned copy between optional live consumers. The
+            // engine can recycle its tap buffer before an async Task runs.
+            let live = self.onLiveBuffer
+            let preview = self.onLivePreviewBuffer
+            if live != nil || preview != nil,
+               let owned = AudioBufferQueue.ownedCopy(of: buffer) {
+                live?(owned)
+                preview?(owned)
             }
-            try? self.file?.write(from: buffer)
-            self.capturedFrames += AVAudioFramePosition(buffer.frameLength)
-            if Self.hasSignal(in: buffer, above: self.silenceRMSThreshold) {
-                self.signalFrameCount += AVAudioFramePosition(buffer.frameLength)
-            }
-            self.onLiveBuffer?(buffer)
-            self.onLivePreviewBuffer?(buffer)
         }
 
         do {
@@ -177,9 +270,10 @@ final class AudioRecorder {
             // start() would sail past the guard above, install a second tap,
             // and kill the app — so one transient audio failure permanently
             // broke dictation until relaunch.
+            session.close()
+            self.session = nil
             input.removeTap(onBus: 0)
             engine.stop()
-            file = nil
             currentFileURL = nil
             try? FileManager.default.removeItem(at: url)
             throw error
@@ -192,13 +286,20 @@ final class AudioRecorder {
     @discardableResult
     func stop() -> URL? {
         guard isRecording else { return nil }
+        // Close the session FIRST. This waits out any write the audio thread
+        // has in flight, closes the file, and guarantees that no callback —
+        // including one the engine delivers after `removeTap` returns — can
+        // touch this recording or leak into the next one.
+        let totals = session?.close()
+        session = nil
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         isRecording = false
-        file = nil
+        capturedFrames = totals?.frames ?? 0
+        capturedFormat = totals?.format
         hasSignal = Self.hasSustainedSignal(
-            signalFrames: signalFrameCount,
-            sampleRate: capturedFormat?.sampleRate ?? 0,
+            signalFrames: totals?.signalFrames ?? 0,
+            sampleRate: totals?.format?.sampleRate ?? 0,
             minimumDuration: minimumSignalDuration)
         let url = currentFileURL
         currentFileURL = nil
@@ -210,6 +311,23 @@ final class AudioRecorder {
         if let url = stop() {
             try? FileManager.default.removeItem(at: url)
         }
+    }
+
+    // MARK: - Empty captures
+
+    /// A recording shorter than this can legitimately contain no audio at
+    /// all: the first buffer arrives roughly 0.2 s after the engine starts
+    /// (measured on this build: ~55 ms engine start + ~160 ms to the first
+    /// 4096-frame buffer). A stray double-tap of the dictation key starts
+    /// hands-free and the next tap stops it well inside that window, which is
+    /// not a microphone fault and shouldn't be reported as one.
+    static let minimumDurationToExpectAudio: TimeInterval = 0.5
+
+    /// True when a zero-frame recording is explained by how briefly it ran.
+    /// Unknown duration is never excused, so a real failure isn't hidden.
+    static func isTooShortToExpectAudio(duration: TimeInterval?) -> Bool {
+        guard let duration else { return false }
+        return duration < minimumDurationToExpectAudio
     }
 
     // MARK: - Silence detection
@@ -226,13 +344,9 @@ final class AudioRecorder {
     static func rmsLevel(in buffer: AVAudioPCMBuffer) -> Float {
         let frameCount = Int(buffer.frameLength)
         guard frameCount > 0, let channelData = buffer.floatChannelData else { return 0 }
-        var sumOfSquares: Float = 0
-        let samples = channelData[0]
-        for i in 0..<frameCount {
-            let sample = samples[i]
-            sumOfSquares += sample * sample
-        }
-        return (sumOfSquares / Float(frameCount)).squareRoot()
+        var meanSquare: Float = 0
+        vDSP_measqv(channelData[0], vDSP_Stride(buffer.stride), &meanSquare, vDSP_Length(frameCount))
+        return meanSquare.squareRoot()
     }
 
     /// RMS energy of one buffer against a threshold. The tap's format comes
@@ -245,14 +359,9 @@ final class AudioRecorder {
         guard frameCount > 0 else { return false }
         guard let channelData = buffer.floatChannelData else { return true }
 
-        var sumOfSquares: Float = 0
-        let samples = channelData[0]
-        for i in 0..<frameCount {
-            let sample = samples[i]
-            sumOfSquares += sample * sample
-        }
-        let rms = (sumOfSquares / Float(frameCount)).squareRoot()
-        return rms > threshold
+        var meanSquare: Float = 0
+        vDSP_measqv(channelData[0], vDSP_Stride(buffer.stride), &meanSquare, vDSP_Length(frameCount))
+        return meanSquare > threshold * threshold
     }
 
     /// Whether accumulated above-floor audio time (from summing
@@ -391,6 +500,19 @@ final class AudioRecorder {
         check(hasSignal(in: speechLike, above: threshold),
               "speech-amplitude signal is detected")
 
+        check(abs(rmsLevel(in: speechLike) - 0.21254) < 0.002,
+              "accelerated RMS preserves the speech meter level")
+        let stereoFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16000,
+                                        channels: 2, interleaved: true)!
+        let stereo = AVAudioPCMBuffer(pcmFormat: stereoFormat, frameCapacity: 100)!
+        stereo.frameLength = 100
+        for index in 0..<100 {
+            stereo.floatChannelData![0][index * 2] = 0.25
+            stereo.floatChannelData![0][index * 2 + 1] = 0
+        }
+        check(abs(rmsLevel(in: stereo) - 0.25) < 0.0001,
+              "accelerated RMS respects interleaved channel stride")
+
         let empty = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 0)!
         check(!hasSignal(in: empty, above: threshold), "an empty buffer has no signal")
 
@@ -429,6 +551,56 @@ final class AudioRecorder {
               "just under the duration floor is silence")
         check(hasSustainedSignal(signalFrames: 7200, sampleRate: 48000, minimumDuration: minDuration),
               "exactly the duration floor is signal")
+
+        check(isTooShortToExpectAudio(duration: 0.07),
+              "a 70 ms recording with no frames is a stray tap, not a mic fault")
+        check(isTooShortToExpectAudio(duration: 0.49),
+              "just under the minimum is still too short to expect audio")
+        check(!isTooShortToExpectAudio(duration: 0.5),
+              "a recording that ran the minimum with no frames is a real fault")
+        check(!isTooShortToExpectAudio(duration: 3),
+              "a deliberate multi-second recording with no frames is reported")
+        check(!isTooShortToExpectAudio(duration: nil),
+              "an unknown duration is never excused")
+
+        // Rapid start/cancel cycles: a callback from a stopped recording
+        // must never write to it, count toward it, or reach a later one.
+        let dir = FileManager.default.temporaryDirectory
+        let urlA = dir.appendingPathComponent("chirp-selftest-\(UUID().uuidString).caf")
+        let urlB = dir.appendingPathComponent("chirp-selftest-\(UUID().uuidString).caf")
+        defer {
+            try? FileManager.default.removeItem(at: urlA)
+            try? FileManager.default.removeItem(at: urlB)
+        }
+        let speech = buffer((0..<1000).map { Float(sin(Double($0) * 0.1)) * 0.3 })
+
+        let first = Session(url: urlA)
+        check(first.append(speech, silenceThreshold: threshold), "an open session accepts audio")
+        let firstTotals = first.close()
+        check(firstTotals.frames == 1000 && firstTotals.signalFrames == 1000,
+              "closing a session reports exactly what it captured")
+        check(!first.append(speech, silenceThreshold: threshold),
+              "a closed session rejects a late callback")
+        check(first.close().frames == 1000, "a late callback doesn't change a closed session's totals")
+
+        let second = Session(url: urlB)
+        check(!first.append(speech, silenceThreshold: threshold) && second.close().frames == 0,
+              "a stale callback from the previous recording never reaches the next one")
+
+        // The real shape of the race: the audio thread keeps appending while
+        // the main thread closes. The total at close() must be final.
+        let racing = Session(url: urlA)
+        let writer = DispatchQueue(label: "chirp.selftest.audio")
+        let done = DispatchSemaphore(value: 0)
+        writer.async {
+            for _ in 0..<3000 { _ = racing.append(speech, silenceThreshold: threshold) }
+            done.signal()
+        }
+        Thread.sleep(forTimeInterval: 0.002)
+        let atClose = racing.close().frames
+        done.wait()
+        check(racing.close().frames == atClose,
+              "nothing is counted after close(), even with the audio thread mid-write")
 
         return passed
     }

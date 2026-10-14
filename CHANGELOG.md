@@ -1,5 +1,60 @@
 # Changelog
 
+## v1.1.2 — 2026-10-13
+
+This release changes how the dictation key and microphone capture are
+handled, and includes a round of work on what the app loads and when. It
+doesn't include before/after CPU or memory measurements.
+
+### Changed
+
+- A press of the dictation key shorter than 120 ms no longer starts the
+  microphone. As a result, recording now begins 120 ms after the key goes
+  down rather than instantly.
+- Each recording keeps its own capture state (file, frame counts, signal
+  level), and the hand-offs to live preview and hands-free auto-stop are
+  lock-protected, so a late audio callback from one recording can't write
+  into the next.
+- When a transcription finishes, it leaves the menu-bar icon and HUD alone if
+  a newer recording has started. A cancelled tap now only affects a recording
+  that is actually in progress.
+- The Notes page now watches the meeting controller directly, so it redraws
+  when a meeting starts, stops or is deleted, rather than waiting for
+  something else to trigger a refresh.
+- A recording shorter than half a second that captured no audio, such as an
+  accidental double-tap followed by a stopping tap, is treated as an
+  accidental press. It no longer shows the "no audio was captured"
+  microphone message or plays the error sound.
+- Recording start, stop and cancel events, and how long short presses of the
+  dictation key were held, are written to the system log, without transcript
+  text. Read them with
+  `/usr/bin/log show --predicate 'subsystem == "local.chirp"' --last 1h`.
+  (In zsh, plain `log` is a shell built-in, not the system tool.)
+- Adds system sleep and wake handling. On sleep, an in-progress recording is
+  stopped and its transcript is saved to History without being pasted into
+  whichever app has focus after wake. Shortcuts are re-registered on wake
+  without starting a recording.
+- Meeting live captions are off by default when the preference has never been
+  set. An explicit choice is kept.
+
+### Performance work
+
+These change what the app loads, and when.
+
+- Speaker models load when a meeting is processed rather than at launch, and
+  Apple Intelligence is no longer prewarmed at launch.
+- The live-preview model is released after 30 idle seconds and reloads on its
+  next use. Speech-detection models are also released when idle.
+- Meeting speaker separation reads the saved audio from disk in windows
+  instead of loading the whole recording into an array.
+- Live preview and hands-free auto-stop use a bounded audio queue. If
+  inference falls behind, the preview pauses for that session.
+- Hiding the dictation HUD removes its animated view. Meeting detection uses
+  app-activation notifications, hidden windows have no ambient timers, and the
+  bird's idle animations play once and rest. Idle bird motion is suspended in
+  Low Power Mode and under thermal pressure.
+- Audio level metering uses Accelerate's vector functions.
+
 ## v1.1.1 — 2026-10-03
 
 ### Improved

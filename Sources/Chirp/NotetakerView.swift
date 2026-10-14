@@ -26,7 +26,19 @@ struct NotetakerPage: View {
     /// reason.
     @State private var browserDetectionEnabled = Settings.browserMeetingDetectionEnabled
 
-    private var controller: NotetakerController { app.notetaker }
+    /// Observed directly, not read through `app.notetaker`. `app` only
+    /// publishes its own changes, and SwiftUI doesn't re-render a view for
+    /// changes inside a nested object it merely reads through a property.
+    /// With the old computed property, Start/Stop changed the controller's
+    /// state but the page didn't redraw until something else happened to
+    /// trigger it — so a press looked like it did nothing, and the
+    /// "Transcribing…" state was never shown.
+    @ObservedObject private var controller: NotetakerController
+
+    init(app: AppDelegate) {
+        self.app = app
+        _controller = ObservedObject(wrappedValue: app.notetaker)
+    }
 
     /// Title, calendar title, and transcript text all match — a note
     /// found by what was actually said, not just by its title, the same
@@ -125,9 +137,7 @@ struct NotetakerPage: View {
                     Text(idleStatusLabel)
                         .font(.manrope(13, .semibold))
                         .foregroundStyle(Palette.warmInk)
-                    Text(controller.isDiarizerReady
-                         ? "Ready — captures your mic and, if you start it, the call's own audio."
-                         : "Preparing the on-device speaker model — capture still works meanwhile.")
+                    Text("Ready — captures your mic and, if you start it, the call's own audio.")
                         .font(.manrope(11.5))
                         .foregroundStyle(Palette.warmInkFaint)
                     if !controller.detector.calendarAuthorized {
@@ -154,6 +164,7 @@ struct NotetakerPage: View {
                         // actually choosing it rather than inheriting it.
                         Button("Also detect meetings in your browser (Chrome, Safari, Edge, Arc, Brave)") {
                             Settings.browserMeetingDetectionEnabled = true
+                            controller.detector.settingsDidChange()
                             browserDetectionEnabled = true
                         }
                         .buttonStyle(.plain)

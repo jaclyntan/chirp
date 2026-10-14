@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import Observation
 import SwiftUI
 
 /// Mirrors `Resources/Pet/pet_sprites.json`'s shape exactly — see that
@@ -84,6 +85,11 @@ enum PetSpriteStore {
     }
 }
 
+@Observable
+final class PetAnimationVisibility {
+    var paused = true
+}
+
 /// Drives one sprite animation at a time: shows a frame, waits that
 /// frame's own specific duration (these aren't fixed-FPS loops — a
 /// tail-flick holds for 600ms either side of a 70ms snap), advances,
@@ -95,7 +101,24 @@ enum PetSpriteStore {
 final class PetAnimator: ObservableObject {
     @Published private(set) var currentFrame: NSImage?
 
-    private(set) var paused = true
+    // Observe visibility separately: sprite ticks stay in the native
+    // layer and never rebuild the surrounding SwiftUI hierarchy.
+    let visibility = PetAnimationVisibility()
+    var paused: Bool { visibility.paused }
+    private var windowPaused = true
+    private var suspended = false
+    private let repeatsIdleAnimations: Bool
+
+    init(repeatsIdleAnimations: Bool = true) {
+        self.repeatsIdleAnimations = repeatsIdleAnimations
+    }
+
+    private func loops(_ state: String) -> Bool {
+        if !repeatsIdleAnimations, ["idle", "idle_preen", "idle_tailflick", "hop"].contains(state) {
+            return false
+        }
+        return PetSpriteStore.loops(state)
+    }
     private var state = ""
     private var frameIndex = 0
     private var finished = false
@@ -103,7 +126,7 @@ final class PetAnimator: ObservableObject {
     private var onFinished: (() -> Void)?
 
     func play(_ newState: String, onFinished: (() -> Void)? = nil) {
-        guard newState != state || !PetSpriteStore.loops(newState) else { return }
+        guard newState != state || !loops(newState) else { return }
         pendingAdvance?.cancel()
         state = newState
         frameIndex = 0
@@ -114,11 +137,39 @@ final class PetAnimator: ObservableObject {
     }
 
     func setPaused(_ value: Bool) {
+        windowPaused = value
+        updatePauseState()
+    }
+
+    func setSuspended(_ value: Bool) {
+        suspended = value
+        updatePauseState()
+    }
+
+    private func updatePauseState() {
+        let value = windowPaused || suspended
         guard paused != value else { return }
-        paused = value
+        visibility.paused = value
         pendingAdvance?.cancel()
         pendingAdvance = nil
         if !paused { scheduleAdvance() }
+    }
+
+    static func runSelfTest() -> Bool {
+        let animator = PetAnimator()
+        animator.setPaused(false)
+        animator.setSuspended(true)
+        animator.setPaused(false)
+        let held = animator.paused
+        animator.setPaused(true)
+        animator.setSuspended(false)
+        let hidden = animator.paused
+        animator.setPaused(false)
+        let resumed = !animator.paused
+        animator.setPaused(true)
+        let passed = held && hidden && resumed
+        print("\(passed ? "PASS" : "FAIL"): window visibility cannot override suspended sprite work")
+        return passed
     }
 
     private func showCurrentFrame() {
@@ -140,7 +191,7 @@ final class PetAnimator: ObservableObject {
         let frameCount = PetSpriteStore.frames(for: state).count
         frameIndex += 1
         if frameIndex >= frameCount {
-            guard PetSpriteStore.loops(state) else {
+            guard loops(state) else {
                 frameIndex = max(0, frameCount - 1)
                 finished = true
                 let completion = onFinished
@@ -164,13 +215,15 @@ final class PetAnimator: ObservableObject {
 struct AnimatedWrenView: View {
     let state: String
     var size: CGFloat = 72
+    var suspended = false
 
-    @State private var animator = PetAnimator()
+    @State private var animator = PetAnimator(repeatsIdleAnimations: false)
 
     var body: some View {
         PetSpriteFrameView(animator: animator, size: size)
-            .onAppear { animator.play(state) }
+            .onAppear { animator.setSuspended(suspended); animator.play(state) }
             .onChange(of: state) { _, newValue in animator.play(newValue) }
+            .onChange(of: suspended) { _, value in animator.setSuspended(value) }
     }
 }
 

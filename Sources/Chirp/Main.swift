@@ -16,6 +16,12 @@ struct ChirpMain {
             case "--transcribe":
                 guard let path = arguments.next() else { usageAndExit() }
                 mode = .transcribe(path)
+            case "--vad-compare":
+                guard let path = arguments.next() else { usageAndExit() }
+                mode = .vadCompare(path)
+            case "--diarize-compare":
+                guard let path = arguments.next() else { usageAndExit() }
+                mode = .diarizeCompare(path)
             case "--live-preview":
                 guard let path = arguments.next() else { usageAndExit() }
                 mode = .livePreview(path)
@@ -55,11 +61,27 @@ struct ChirpMain {
             let learnedPassed = LearnedStore.runSelfTest()
             let rewritePlanPassed = RewritePlanSelfTest.run()
             let audioPassed = AudioRecorder.runSelfTest()
+            let audioQueuePassed = AudioBufferQueue.runSelfTest()
+            let previewPassed = await LivePreviewTranscriber.runSelfTest()
+            let powerPassed = await RuntimeActivity.runSelfTest()
+            let spritePowerPassed = PetAnimator.runSelfTest()
+            let hotkeyPowerPassed = HotkeyMonitor.runSelfTest()
+            let vadPassed = await VadEngine.runSelfTest()
+            let hudPassed = StatusHUDController.runSelfTest()
+            let meetingAudioPassed = await MeetingTranscriber.runSelfTest()
             let hallucinationPassed = HallucinationFilter.runSelfTest()
             let developerVocabPassed = DeveloperVocabulary.runSelfTest()
             exit(formatterPassed && learnedPassed
                  && rewritePlanPassed && audioPassed && hallucinationPassed
-                 && developerVocabPassed ? 0 : 1)
+                 && developerVocabPassed && audioQueuePassed && previewPassed
+                 && meetingAudioPassed && powerPassed && spritePowerPassed
+                 && hotkeyPowerPassed && vadPassed && hudPassed ? 0 : 1)
+
+        case .vadCompare(let path):
+            exit(await VadEngine.compareFileCheck(fileAt: URL(fileURLWithPath: path)) ? 0 : 1)
+
+        case .diarizeCompare(let path):
+            exit(await MeetingTranscriber.compareStreaming(fileAt: URL(fileURLWithPath: path)) ? 0 : 1)
 
         case .format(let text):
             // Same pipeline as live dictation: format, apply learned
@@ -246,6 +268,8 @@ struct ChirpMain {
         case historyExport(String)
         case selftest
         case livePreview(String)
+        case diarizeCompare(String)
+        case vadCompare(String)
     }
 
     @MainActor
@@ -332,7 +356,12 @@ struct ChirpMain {
                                       keeps on disk)
           Chirp --history-search "<term>"   search history, same window
           Chirp --history-export <path>     write history as JSON to a file
-          Chirp --selftest           run formatter self-tests
+          Chirp --selftest           run regression self-tests
+          Chirp --vad-compare <file>        compare streamed and full-file VAD
+                                      (up to 120 seconds, cached model only)
+          Chirp --diarize-compare <file>    compare streaming with full-array
+                                      speaker separation (10–120 seconds,
+                                      16 kHz mono, cached models only)
         """)
         exit(0)
     }

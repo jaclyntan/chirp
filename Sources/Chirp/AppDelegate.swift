@@ -31,9 +31,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Obse
     /// shown while you speak. Never feeds the real pipeline — see
     /// `LivePreviewTranscriber` — and is cleared the moment recording
     /// stops, at which point the real transcript takes over.
-    @Published var livePreviewText = "" {
-        didSet { statusHUD.setLiveText(livePreviewText) }
+    private let previewState = LivePreviewState()
+    var livePreviewText: String {
+        get { previewState.text }
+        set {
+            guard previewState.text != newValue else { return }
+            previewState.text = newValue
+            statusHUD.setLiveText(newValue)
+        }
     }
+    let activity = RuntimeActivity()
+    private var sleepGeneration = 0
 
     /// Height of the custom titlebar strip drawn in SwiftUI; the traffic
     /// lights are aligned to its vertical center.
@@ -93,17 +101,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Obse
             // plus a status line still means work is happening.
             state = transformStatus.map { .processing($0) } ?? .hidden
         }
+        let displayState: HUDState = activity.suspendsAmbientWork ? .hidden : state
         // Deferred, never inline. These observers fire during a @Published
         // change — i.e. in the middle of SwiftUI's own update pass — and
         // building an NSHostingView/NSPanel there would start a nested
         // SwiftUI update on the same actor. Hopping to the next main-actor
         // turn keeps all window work out of that cycle.
         Task { @MainActor [statusHUD] in
-            statusHUD.update(state)
+            statusHUD.update(displayState)
         }
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        configurePowerLifecycle()
         FontLoader.registerManrope()
         // Pinned to light always — dark mode support (a System/Light/Dark
         // picker, `Palette.dynamic()` resolving per-appearance) was cut:
@@ -131,12 +141,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Obse
         // why: that HUD's Dock-adjacent position collided with the Dock's
         // own hover-reveal strip in a way a user-positioned icon can't.
         petPanel.setActive(true, app: self)
-        // VAD refines the silence gate ahead of recognition — see
-        // docs/removed-engines.md for why this (and FluidAudio generally)
-        // stays even with only the Apple engine selectable.
-        vadEngine.preload()
+        // VAD loads on demand and releases after idle; launch owns no
+        // speech model solely for the extra silence check.
         livePreview.onUpdate = { [weak self] text in self?.livePreviewText = text }
-        // Same reason `vadEngine.preload()` is here: the model's cold
+        // With preview explicitly enabled, the model's cold
         // start is seconds long, and paying it on the first dictation
         // means the preview misses the very words it exists to show.
         if Settings.livePreviewEnabled { livePreview.preload() }
@@ -152,15 +160,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Obse
         Task.detached { [transcriber] in
             try? await transcriber.ensureModelInstalled()
         }
-        // Same idea for the rewrite model — its only remaining caller is
-        // Notetaker's on-demand Summarize (live dictation no longer uses
-        // it at all), so this is what keeps a note's first summarize from
-        // paying the model's cold-start cost.
-        if rewriteEngine.isAvailable {
-            Task.detached { [rewriteEngine] in
-                rewriteEngine.prewarm()
-            }
-        }
+        // Summarization loads Apple Intelligence only when used.
         checkForUpdates()
 
         // Same engine-selection/fallback path every normal dictation
@@ -170,6 +170,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Obse
             try await self?.recognize(fileAt: url, bundleID: nil) ?? ""
         }
         notetaker.rewriteEngine = rewriteEngine
+        notetaker.activity = activity
         notetaker.setWindowExcludedFromCapture = { [weak self] excluded in
             self?.window?.sharingType = excluded ? .none : .readOnly
         }
@@ -186,6 +187,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Obse
 
         pasteLastHotkeyMonitor.onTrigger = { [weak self] in self?.pasteLastTranscript() }
         refreshPasteLastHotkey()
+    }
+
+    private func configurePowerLifecycle() {
+        activity.onSleep = { [weak self] in self?.prepareForSystemSleep() }
+        activity.onWake = { [weak self] in self?.recoverFromSystemSleep() }
+        activity.onAmbientChange = { [weak self] suspended in
+            guard let self else { return }
+            if suspended { self.notetaker.detector.stopWatching() }
+            else { self.notetaker.detector.startWatching() }
+            self.mainWindowVisible = !suspended && self.window?.occlusionState.contains(.visible) == true
+            self.updateHUD()
+        }
+        activity.start()
+    }
+
+    private func prepareForSystemSleep() {
+        sleepGeneration += 1
+        hotkeyMonitor.stopMonitoring()
+        notetakerHotkeyMonitor.stop()
+        pasteLastHotkeyMonitor.stop()
+        recorder.onLiveBuffer = nil
+        turnDetector.stop()
+        isHandsFree = false
+        if uiState == .recording {
+            // Keep captured speech in History after wake; don't paste into
+            // whatever happens to have focus when the Mac wakes up.
+            stopAndTranscribe(insertResult: false)
+        }
+        livePreview.suspend()
+        vadEngine.suspend()
+        notetaker.prepareForSystemSleep()
+    }
+
+    private func recoverFromSystemSleep() {
+        livePreview.resume()
+        vadEngine.resume()
+        notetaker.recoverFromSystemSleep()
+        hotkeyMonitor.startMonitoring()
+        refreshPermissions()
+        notetakerHotkeyMonitor.start()
+        refreshPasteLastHotkey()
+        // No model prewarm or automatic recording on wake.
     }
 
     /// Starts or stops the paste-last monitor to match the setting, so
@@ -367,7 +410,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Obse
     func windowDidChangeOcclusionState(_ notification: Notification) {
         guard let changedWindow = notification.object as? NSWindow,
               changedWindow === window else { return }
-        let visible = changedWindow.occlusionState.contains(.visible)
+        let visible = !activity.suspendsAmbientWork && changedWindow.occlusionState.contains(.visible)
         if mainWindowVisible != visible { mainWindowVisible = visible }
         if visible { refreshPermissions() }
     }
@@ -498,6 +541,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Obse
     /// Apple's on-device engine left, there's nothing left to choose
     /// between or fall back from.
     private func recognize(fileAt url: URL, bundleID: String?) async throws -> String {
+        await activity.waitUntilAwake()
         let developerVocabulary = DictationDefaults.developerVocabularyEnabled(forBundleID: bundleID)
         let biasTerms = LearnedStore.biasTerms(includeDeveloperVocabulary: developerVocabulary)
         dictationLog.info(
@@ -516,13 +560,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Obse
         }
         hotkeyMonitor.onCancel = { [weak self] in
             DispatchQueue.main.async {
+                // Only undo a recording that exists. A cancel arriving while
+                // a previous dictation is still transcribing (or after a
+                // start that was refused) used to force `uiState` to idle,
+                // hiding the HUD under work that was still running.
+                guard let self, self.uiState == .recording else { return }
+                dictationLog.notice("record: cancelled (tap)")
                 // Cancel is the other way out of a recording, so it has to
                 // tear the preview down too — otherwise the tap hook stays
                 // attached and the next session starts with a stale one
                 // already running.
-                self?.stopLivePreview()
-                self?.recorder.cancel()
-                self?.uiState = .idle
+                self.stopLivePreview()
+                self.recorder.onLiveBuffer = nil
+                self.turnDetector.stop()
+                self.recorder.cancel()
+                self.uiState = .idle
             }
         }
         hotkeyMonitor.onHandsFreeChange = { [weak self] active in
@@ -535,7 +587,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Obse
                     if Settings.handsFreeAutoStop {
                         self.turnDetector.start()
                         self.recorder.onLiveBuffer = { [weak self] buffer in
-                            Task { @MainActor in await self?.turnDetector.ingest(buffer) }
+                            Task { @MainActor in self?.turnDetector.enqueue(buffer) }
                         }
                     }
                 } else {
@@ -554,6 +606,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Obse
 
     private var recordingStartedAt: Date?
     private var recordingTargetBundleID: String?
+
+    /// Bumped each time a recording actually starts. A transcription task
+    /// remembers the value it was started under, so when it finishes it can
+    /// tell whether a newer recording has since taken over `uiState`.
+    ///
+    /// Without this, a task finishing late set `uiState = .idle` underneath
+    /// a recording already in progress — wrong icon and HUD, and the next
+    /// press then took the "not recording" path while the recorder was still
+    /// running. Quick successive presses made that easy to hit.
+    private var dictationEpoch = 0
+
+    /// Returns the UI to idle at the end of a transcription — unless a newer
+    /// recording has started, which now owns the state.
+    private func finishProcessing(epoch: Int) {
+        guard epoch == dictationEpoch else { return }
+        uiState = .idle
+    }
 
     /// The pet's own mic button — same hands-free semantics as a
     /// double-tap of the hotkey (start and keep listening, rather than
@@ -591,9 +660,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Obse
     }
 
     private func startRecording() {
-        guard uiState != .recording else { return }
+        guard !activity.suspendsAmbientWork, uiState != .recording else { return }
         do {
             try recorder.start()
+            dictationEpoch += 1
             recordingStartedAt = Date()
             let frontmost = NSWorkspace.shared.frontmostApplication
             recordingTargetBundleID = frontmost?.bundleIdentifier
@@ -610,20 +680,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Obse
                     Task { @MainActor in self?.livePreview.enqueue(buffer) }
                 }
             }
+            // `.notice`, not `.info`: info lines are not kept on disk, so
+            // they are gone by the time anyone looks after a crash. These
+            // lifecycle lines carry no transcript text.
+            dictationLog.notice("record: started #\(self.dictationEpoch)")
             NSSound(named: "Pop")?.play()
         } catch {
+            dictationLog.error("record: could not start: \(error.localizedDescription, privacy: .public)")
             lastError = "Could not start recording: \(error.localizedDescription)"
             NSSound(named: "Basso")?.play()
         }
     }
 
-    private func stopAndTranscribe() {
+    private func stopAndTranscribe(insertResult: Bool = true) {
+        let generation = sleepGeneration
         isHandsFree = false
         stopLivePreview()
+        recorder.onLiveBuffer = nil
+        turnDetector.stop()
         guard let url = recorder.stop() else {
             uiState = .idle
             return
         }
+        dictationLog.notice("record: stopped #\(self.dictationEpoch), transcribing")
         NSSound(named: "Tink")?.play()
         uiState = .processing
         let duration = recordingStartedAt.map { Date().timeIntervalSince($0) }
@@ -635,6 +714,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Obse
         let rate = recorder.capturedFormat?.sampleRate ?? 0
         dictationLog.info("stop: \(frames) frames @ \(rate, format: .fixed(precision: 0)) Hz")
         guard frames > 0 else {
+            // A recording that ended before the mic could deliver its first
+            // buffer — a stray double-tap, then a tap to stop it — isn't a
+            // microphone fault. Don't raise the error message or the error
+            // sound for it; just return to idle.
+            if AudioRecorder.isTooShortToExpectAudio(duration: duration) {
+                dictationLog.notice(
+                    "stop: ended after \(Int((duration ?? 0) * 1000)) ms, before any audio arrived; ignored")
+                uiState = .idle
+                try? FileManager.default.removeItem(at: url)
+                return
+            }
             // The microphone delivered nothing at all. Previously this still
             // went to the recognizer, which returned an empty string, and the
             // whole dictation vanished with no explanation.
@@ -663,15 +753,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Obse
             return
         }
 
-        Task { [history, rewriteEngine] in
+        let epoch = dictationEpoch
+        Task { [history] in
             defer { try? FileManager.default.removeItem(at: url) }
+            await activity.waitUntilAwake()
             // A second, sharper opinion on top of the RMS-based `hasSignal`
             // gate just above — catches what raw amplitude can't, like a
             // loud non-speech sound clearing the floor. Independent of
             // whichever recognition engine is selected below.
-            if await vadEngine.hasNoDetectedSpeech(fileAt: url) {
+            if await vadEngine.hasNoDetectedSpeech(fileAt: url, activity: activity) {
                 dictationLog.info("recognize: VAD found no speech, skipping recognition")
-                uiState = .idle
+                finishProcessing(epoch: epoch)
                 return
             }
             do {
@@ -698,7 +790,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Obse
                         // The default redaction still records that a
                         // discard happened, without the transcript itself.
                         "recognize: discarded as a likely hallucination: \(raw)")
-                    uiState = .idle
+                    finishProcessing(epoch: epoch)
                     return
                 }
 
@@ -790,7 +882,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Obse
                     history.add(formatted, duration: duration, targetBundleID: targetBundleID)
                     entries = history.entries
                     dictationLog.info("history: added, inserting text")
-                    if AXIsProcessTrusted() {
+                    if !insertResult || generation != sleepGeneration || activity.suspendsAmbientWork {
+                        dictationLog.info("history: preserved dictation across sleep; automatic paste skipped")
+                    } else if AXIsProcessTrusted() {
                         // Dictating into Chirp's own window (Scratchpad,
                         // Ask, Transforms' try-it box, …) is the one case
                         // where the paste target and the app posting the
@@ -836,7 +930,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Obse
                 lastError = "Transcription failed: \(error.localizedDescription)"
                 NSSound(named: "Basso")?.play()
             }
-            uiState = .idle
+            finishProcessing(epoch: epoch)
             dictationLog.info("idle")
         }
     }
@@ -1102,11 +1196,10 @@ enum Settings {
     }
 
     /// Gates whether `NotetakerController` runs its two `LivePreviewTranscriber`
-    /// instances at all during a capture — on by default (it's the reassurance
-    /// feature it was built to be), off for anyone who finds a live caption
-    /// distracting rather than helpful.
+    /// instances at all during a capture. Opt-in: two streaming models
+    /// add substantial memory and inference cost on an entry-level Mac.
     static var notetakerLiveTranscriptEnabled: Bool {
-        get { defaults.object(forKey: "notetakerLiveTranscriptEnabled") as? Bool ?? true }
+        get { defaults.object(forKey: "notetakerLiveTranscriptEnabled") as? Bool ?? false }
         set { defaults.set(newValue, forKey: "notetakerLiveTranscriptEnabled") }
     }
 

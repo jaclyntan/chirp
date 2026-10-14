@@ -488,7 +488,7 @@ struct SettingsPage: View {
             fieldRow(
                 label: "Show live transcript",
                 detail: "Rough captions from both sides of the call while it's still running "
-                    + "— the real, diarized transcript is only written once you stop."
+                    + "— uses more memory and CPU. The saved transcript is written once you stop."
             ) {
                 WarmToggle(isOn: $notetakerLiveTranscriptEnabled)
                     .onChange(of: notetakerLiveTranscriptEnabled) { _, newValue in
@@ -531,6 +531,7 @@ struct SettingsPage: View {
                 WarmToggle(isOn: $browserMeetingDetectionEnabled)
                     .onChange(of: browserMeetingDetectionEnabled) { _, newValue in
                         Settings.browserMeetingDetectionEnabled = newValue
+                        app.notetaker.detector.settingsDidChange()
                     }
             }
             fieldRow(

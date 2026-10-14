@@ -45,9 +45,11 @@ them into the right place. See `FontLoader.registerManrope()` and
 
 Run `./scripts/make_signing_cert.sh` once. It creates a local self-signed
 certificate so the bundle keeps a stable identity, and macOS keeps your
-Accessibility/Microphone grants between rebuilds. Without it the app is
-ad-hoc signed and you re-grant Accessibility every single build, which
-makes testing the hotkey miserable.
+Accessibility/Microphone grants between rebuilds. Without it
+`make_app.sh` refuses to build rather than falling back to ad-hoc
+signing: an ad-hoc signature changes every build, so you'd re-grant
+Accessibility each time, and a single ad-hoc build is enough to
+invalidate grants already recorded against the certificate.
 
 ## Running and testing
 
@@ -96,7 +98,8 @@ so they can't drift apart.
 ```bash
 echo "2.2.0" > VERSION
 # …add a matching ## 2.2.0 section to CHANGELOG.md…
-git commit -am "Release 2.2.0"
+git add -A            # `commit -am` skips NEW files; check `git status` first
+git commit -m "Release 2.2.0"
 
 ./scripts/publish_release.sh             # dry run: builds + shows the plan
 ./scripts/publish_release.sh --publish   # tags, pushes, creates the release
@@ -210,3 +213,37 @@ its trigger out loud, so a preset that doesn't suit you costs nothing.
   ran, but decoded to nothing, while the recording itself kept working.
   See that file's own comment before touching it again, and verify any
   change with `--live-preview` (below), not just a normal dictation.
+- **Reading Chirp's log: use `/usr/bin/log`, not `log`.** In zsh, plain
+  `log` is a shell built-in that shadows the system tool. It fails with
+  `too many arguments`, and with `2>/dev/null` that looks exactly like
+  "no log entries". Start, stop and cancel events, plus how long short
+  dictation-key presses were held, are logged at `.notice` (kept on disk):
+  `/usr/bin/log show --last 1h --predicate 'subsystem == "local.chirp"'`.
+  `.info` lines are only visible with `--info`, and only while still in
+  memory.
+- **Quit before rebuilding, and check the quit worked.** `make_app.sh`
+  replaces `build/Chirp.app`; if the old copy is still running, `open`
+  just brings that old process forward and you test the old code. After
+  launching, confirm the process started *after* the binary was built
+  (`ps -o lstart= -p <pid>` vs `ls -lT build/Chirp.app/Contents/MacOS/Chirp`).
+- **Screen Recording can show "off" after a rebuild.** Accessibility and
+  Microphone survive rebuilds (same signing certificate), but Screen
+  Recording showed as not granted until the Chirp entry was removed with
+  the minus button in System Settings and added again. Observed, not
+  fully explained; macOS appears to tie that grant to the build itself.
+- **The dictation key starts recording 120 ms after key-down.**
+  `HotkeyMonitor.startDelay` keeps a brushed key from spinning the audio
+  engine up and down. A press that ends sooner never starts the
+  microphone. Set it to 0 to start on key-down. Measured start-up is
+  roughly 55 ms (engine) plus 160 ms (first buffer), so the delay is a
+  real cost on top of that.
+- **A zero-frame recording under half a second is not a mic fault.**
+  A stray double-tap then a stopping tap ends before the first buffer
+  arrives. `AudioRecorder.isTooShortToExpectAudio` makes that a silent
+  no-op instead of the "microphone delivered nothing" error.
+- **SwiftUI pages must observe the controller, not read it through
+  `app`.** `NotetakerPage` reads `app.notetaker`; a nested
+  `ObservableObject` read through another object's property does not
+  trigger redraws. Use `@ObservedObject` on the controller itself, or Start,
+  Stop and Delete will look unresponsive until something else redraws the
+  page.

@@ -44,8 +44,8 @@ final class NotetakerController: ObservableObject {
     let detector = MeetingDetector()
     private let store = MeetingNoteStore()
     private let knownSpeakers = KnownSpeakerStore()
-    private let systemAudio = MeetingAudioCapture()
-    private let micRecorder = AudioRecorder()
+    private lazy var systemAudio = MeetingAudioCapture()
+    private lazy var micRecorder = AudioRecorder()
     private let transcriber = MeetingTranscriber()
     // Two separate instances, not one shared: `micLivePreview` sees only
     // `micRecorder`'s tap, `systemLivePreview` only `systemAudio`'s — each
@@ -54,8 +54,10 @@ final class NotetakerController: ObservableObject {
     // particular), mirroring `AppDelegate`'s own `livePreviewTranscriber`
     // for normal dictation rather than sharing that instance, which is
     // reserved for the main dictation HUD's own session bookkeeping.
-    private let micLivePreview = LivePreviewTranscriber()
-    private let systemLivePreview = LivePreviewTranscriber()
+    private lazy var micLivePreview = LivePreviewTranscriber()
+    private lazy var systemLivePreview = LivePreviewTranscriber()
+    var activity: RuntimeActivity?
+    private var captureStartTask: Task<Void, Never>?
     private var activeApp: MeetingApp?
     // Read from Calendar the moment capture *starts*, not when it stops —
     // `MeetingDetector`'s own lookup only matches an event whose window
@@ -94,9 +96,6 @@ final class NotetakerController: ObservableObject {
     init() {
         notes = store.notes
         detector.startWatching()
-        Task { await transcriber.prepareDiarizer() }
-        micLivePreview.onUpdate = { [weak self] text in self?.liveTranscriptYou = text }
-        systemLivePreview.onUpdate = { [weak self] text in self?.liveTranscriptOthers = text }
     }
 
     func refreshScreenRecordingStatus() {
@@ -110,11 +109,9 @@ final class NotetakerController: ObservableObject {
     }
 
     var canStart: Bool {
-        if case .idle = state { return true }
+        if case .idle = state { return activity?.systemSleeping != true }
         return false
     }
-
-    var isDiarizerReady: Bool { transcriber.isDiarizerReady }
 
     /// `app` nil means "capture my own mic only" — still useful (a solo
     /// voice memo of a call Chirp can't see the other side of, e.g. a
@@ -140,6 +137,9 @@ final class NotetakerController: ObservableObject {
         startWatchdog(startedAt: startedAt)
 
         if Settings.notetakerLiveTranscriptEnabled {
+            micLivePreview.onUpdate = { [weak self] text in
+                if self?.liveTranscriptYou != text { self?.liveTranscriptYou = text }
+            }
             micLivePreview.start()
             micRecorder.onLivePreviewBuffer = { [weak self] buffer in
                 Task { @MainActor in self?.micLivePreview.enqueue(buffer) }
@@ -148,15 +148,19 @@ final class NotetakerController: ObservableObject {
 
         guard screenRecordingAuthorized, let app else { return }
         if Settings.notetakerLiveTranscriptEnabled {
+            systemLivePreview.onUpdate = { [weak self] text in
+                if self?.liveTranscriptOthers != text { self?.liveTranscriptOthers = text }
+            }
             systemLivePreview.start()
             systemAudio.onLiveBuffer = { [weak self] buffer in
                 Task { @MainActor in self?.systemLivePreview.enqueue(buffer) }
             }
         }
-        Task {
+        captureStartTask = Task {
             do {
                 try await systemAudio.start(bundleID: app.rawValue)
             } catch {
+                guard !Task.isCancelled else { return }
                 // The mic side alone still produces a usable (if
                 // one-sided) note — this isn't fatal to the capture
                 // already under way, just quietly narrower.
@@ -180,6 +184,7 @@ final class NotetakerController: ObservableObject {
         watchdogTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.checkWatchdog(startedAt: startedAt) }
         }
+        watchdogTimer?.tolerance = 1
     }
 
     private func stopWatchdog() {
@@ -206,19 +211,24 @@ final class NotetakerController: ObservableObject {
 
     func cancel() {
         guard case .capturing = state else { return }
-        _ = micRecorder.stop()
+        micRecorder.cancel()
         micRecorder.onLivePreviewBuffer = nil
         systemAudio.onLiveBuffer = nil
         micLivePreview.stop()
         systemLivePreview.stop()
         stopWatchdog()
         setWindowExcludedFromCapture?(false)
+        let startTask = captureStartTask
+        startTask?.cancel()
+        captureStartTask = nil
+        state = .processing
         Task {
-            if systemAudio.isCapturing {
-                _ = await systemAudio.stop()
+            await startTask?.value
+            if systemAudio.isCapturing, let url = await systemAudio.stop() {
+                try? FileManager.default.removeItem(at: url)
             }
+            state = .idle
         }
-        state = .idle
         activeApp = nil
         capturedCalendarTitle = nil
         capturedAttendeeHint = nil
@@ -233,6 +243,10 @@ final class NotetakerController: ObservableObject {
         let calendarTitle = capturedCalendarTitle
         let attendeeHint = capturedAttendeeHint
         let serviceName = capturedServiceName
+        let endedAt = Date()
+        let micURL = micRecorder.stop()
+        let startTask = captureStartTask
+        captureStartTask = nil
         state = .processing
         activeApp = nil
         capturedCalendarTitle = nil
@@ -250,13 +264,16 @@ final class NotetakerController: ObservableObject {
         setWindowExcludedFromCapture?(false)
 
         Task {
-            let micURL = micRecorder.stop()
+            // A capture still starting must finish before stop; otherwise
+            // a late ScreenCaptureKit start can record after sleep/cancel.
+            await startTask?.value
             let systemURL = systemAudio.isCapturing ? await systemAudio.stop() : nil
             defer {
                 if let micURL { try? FileManager.default.removeItem(at: micURL) }
                 if let systemURL { try? FileManager.default.removeItem(at: systemURL) }
             }
 
+            await activity?.waitUntilAwake()
             guard let transcribeFile else {
                 lastError = "Notetaker isn't wired up to a transcription engine yet."
                 state = .idle
@@ -266,7 +283,7 @@ final class NotetakerController: ObservableObject {
             let segments = await transcriber.transcribe(
                 micURL: micURL, systemAudioURL: systemURL,
                 knownSpeakers: knownSpeakers.speakers,
-                attendeeHint: attendeeHint,
+                attendeeHint: attendeeHint, activity: activity,
                 transcribeFile: transcribeFile)
             guard !segments.isEmpty else {
                 lastError = "Didn't catch any speech in that meeting — nothing was saved."
@@ -276,10 +293,11 @@ final class NotetakerController: ObservableObject {
 
             var note = MeetingNote(
                 title: calendarTitle ?? serviceName ?? capturedApp?.displayName ?? "Meeting",
-                date: startedAt, duration: Date().timeIntervalSince(startedAt),
+                date: startedAt, duration: endedAt.timeIntervalSince(startedAt),
                 appBundleID: capturedApp?.rawValue, calendarTitle: calendarTitle,
                 segments: segments)
 
+            await activity?.waitUntilAwake()
             if let rewriteEngine,
                let result = await MeetingSummarizer.summarize(note, engine: rewriteEngine) {
                 note.summary = result.summary
@@ -291,6 +309,18 @@ final class NotetakerController: ObservableObject {
             notes = store.notes
             state = .idle
         }
+    }
+
+    func prepareForSystemSleep() {
+        captureStartTask?.cancel()
+        if case .capturing = state { stop() }
+        micLivePreview.suspend()
+        systemLivePreview.suspend()
+    }
+
+    func recoverFromSystemSleep() {
+        micLivePreview.resume()
+        systemLivePreview.resume()
     }
 
     /// Renames every segment sharing `speakerIndex` within one note at
