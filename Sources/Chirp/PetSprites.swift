@@ -93,8 +93,8 @@ final class PetAnimationVisibility {
 /// Drives one sprite animation at a time: shows a frame, waits that
 /// frame's own specific duration (these aren't fixed-FPS loops — a
 /// tail-flick holds for 600ms either side of a 70ms snap), advances,
-/// repeats or stops. `play(_:onFinished:)` on a non-looping state (just
-/// `activated`) calls back once the last frame's hold ends, so a caller
+/// repeats or stops. `play(_:onFinished:)` on a non-looping state (`activated`,
+/// `blink`, or `celebrate`) calls back once the last frame's hold ends, so a caller
 /// can hand off to whatever should play next rather than freezing on
 /// the final frame.
 @MainActor

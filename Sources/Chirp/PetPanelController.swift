@@ -628,13 +628,9 @@ private struct PetView: View {
         CGSize(width: Settings.petWanders ? 139 : 106, height: 40)
     }
 
-    /// idle/idle_preen/idle_tailflick/hop — cycled between at random
-    /// while genuinely idle, per PET_BRIEF.md's own ask. `hop` (a
-    /// stays-in-place bounce, the brief's "worth including regardless of
-    /// whether autonomous roaming ever gets built" bonus) counts as a
-    /// fourth idle flavor rather than a separate, unbuilt "wanders the
-    /// screen" behavior.
-    private static let idleVariants = ["idle", "idle_preen", "idle_tailflick", "hop"]
+    /// Idle poses, grooming, tail flicks, hops, and one-shot blinks
+    /// alternate at random while the pet is resting.
+    private static let idleVariants = ["idle", "idle_preen", "idle_tailflick", "hop", "blink"]
     // Ambient animation plays once every six seconds, then rests. A
     // hidden pet has no timer; wandering shares this same occasional tick.
     @State private var lastWanderCheck = Date()
@@ -818,11 +814,9 @@ private struct PetView: View {
         onWander(
             { travel, left in
                 facingLeft = left
-                // `hover` is the wing-flap the cursor-hover reaction uses;
-                // reused here because it's the only sprite with the wings
-                // actually out, which is exactly what a bird in the air
-                // needs. Walking keeps the ground-travel hop cycle.
-                animator.play(travel == .flying ? "hover" : "walk")
+                // Sustained wingbeats for airborne travel; ground travel
+                // keeps the hopping walk cycle.
+                animator.play(travel == .flying ? "flight" : "walk")
             },
             {
                 isWandering = false

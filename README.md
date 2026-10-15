@@ -2,185 +2,160 @@
   <img src="Resources/Promo/chirp_promo_landscape_1920x1080.png" alt="Chirp" width="640">
 </p>
 
-**Private voice dictation for macOS — everything runs on your Mac.**
+**Private voice dictation for Mac.**
 
-Hold your dictation key, speak, release. Clean text appears at your cursor
-in any app.
-No cloud, no account, no subscription, no word limits.
+Hold your dictation key, speak, release. Chirp pastes the transcript at
+your cursor. Recognition and cleanup run on your Mac, with no account,
+subscription, or word limits.
 
 ## Install
 
-No terminal, no Xcode, nothing technical — just these steps:
+1. Download **Chirp-<version>.dmg** from the
+   [latest release](https://github.com/jaclyntan/chirp/releases/latest).
+2. Open the disk image and drag **Chirp** into **Applications**.
+3. Open Chirp and follow the welcome guide to choose a dictation key and
+   test your microphone.
 
-1. Go to [Releases](https://github.com/jaclyntan/chirp/releases/latest)
-   and click **Chirp-\<version\>.dmg** to download it.
-2. Open the downloaded file. A window appears with the Chirp icon and a
-   shortcut to your Applications folder.
-3. Drag the Chirp icon onto the Applications shortcut. That's the install
-   — you can close the window now.
+Chirp is self-signed and isn't notarised, so macOS may block the first
+launch. If that happens, open **System Settings → Privacy & Security**
+and look for **Open Anyway** after trying to open the app. Only bypass
+that warning for a copy you downloaded from this repository's releases.
 
-**The first time you open Chirp, macOS will get suspicious of it —
-that's expected, and there's a one-time trick to get past it:**
+Allow **Microphone** access to record and **Accessibility** access for
+global shortcuts and automatic pasting. Without Accessibility, you can
+paste the copied transcript yourself with **⌘V**. Notetaker also needs
+**Screen Recording** access to capture a meeting app's audio.
 
-Chirp isn't signed with a paid Apple developer certificate (that costs
-$99/year, and this is a free hobby project), so macOS treats it the way
-it treats any app it doesn't recognise: it refuses to open and may even
-say the app is "damaged". It isn't damaged — that warning is generic and
-appears for any app from outside the App Store that isn't paid-certified.
-
-To open it anyway, **do this once**:
-
-1. Open your **Applications** folder and find Chirp.
-2. **Right-click** (or hold Control and click) on Chirp, then choose
-   **Open** from the menu that appears. Don't just double-click it — that
-   triggers the warning again.
-3. A dialog pops up saying macOS can't verify the developer. Click
-   **Open** on that dialog too.
-
-Chirp will now open normally, and every time after this you can just
-double-click it like any other app.
-
-*If step 2's menu doesn't offer "Open":* go to **System Settings →
-Privacy & Security**, scroll down to the message about Chirp being
-blocked, and click **Open Anyway** there instead.
-
-### The first launch
-
-Chirp will ask for two permissions — click **Allow** for both when
-prompted:
-
-- **Microphone**, so it can hear you.
-- **Accessibility**, so it can notice when you hold the dictation key and
-  type your words into whatever app you're using. Without this, Chirp
-  still works, but it copies text to your clipboard instead of typing it
-  for you, so you'd need to press ⌘V yourself each time.
-
-A short welcome guide walks you through choosing a dictation key and
-testing your microphone.
-
-**One thing that surprises people:** Chirp has no icon in the Dock and no
-window that stays open — it lives quietly in the menu bar at the top of
-your screen. To open its window again later, click its icon in the menu
-bar, or click the small animated bird that floats on your desktop.
+Chirp lives in the menu bar and has no Dock icon. Click its menu-bar icon
+or the floating bird to open the main window.
 
 ### Requirements
 
-- A Mac with an Apple Silicon chip (M1, M2, M3, or M4 — any Mac bought
-  from late 2020 onward almost certainly has one; check under the Apple
-  menu → About This Mac if you're not sure).
-- macOS 26 (Tahoe) or newer.
+- Apple silicon Mac (M1 or later).
+- macOS 26 (Tahoe) or later.
+- Internet access for any required first-use model downloads. Once the
+  models are installed, transcription works offline.
+- Optional meeting summaries require Apple Intelligence to be available
+  and enabled on your Mac.
 
 ## What it does
 
-- **Push-to-talk** — hold your dictation key anywhere; release to paste at
-  your cursor. `fn` (Globe) by default, or pick Right Option, Right Command,
-  Right Control, or Right Shift instead. Double-tap for hands-free.
-- **On-device recognition** — Apple's SpeechAnalyzer. Instant, no model
-  download, works offline.
-- **Cleanup** — removes filler words, handles spoken "new line" and "new
-  paragraph", capitalises, applies your personal dictionary, and expands
-  snippets (say a trigger phrase → paste a saved block). Terminals and
-  code editors get your exact words, untouched.
-- **Grammar pass** — [Harper](https://github.com/Automattic/harper) catches
-  agreement, punctuation and repeated words. Deterministic, milliseconds,
-  no model.
-- **Learns your corrections** — fix a transcript in History and Chirp
-  remembers the misheard word for next time. Ships with starter snippets
-  and dictionary entries to edit or clear out wholesale.
-- **Paste last transcript** — an optional shortcut that re-pastes your most
-  recent transcript at the cursor, for when focus moved mid-dictation.
-- **Live transcript**, optionally — see the words appear in the wren's
-  speech bubble as you speak.
-- **Opens at login**, optionally — so the dictation key works without
-  launching anything first.
-- **Notetaker** — captures a call from your mic and the meeting app's
-  audio, separates speakers, and writes up a transcript locally. Optional
-  on-device summary, per note.
+- **Push-to-talk:** hold `fn` (Globe), speak, and release to paste. You can
+  choose Right Option, Right Command, Right Control, or Right Shift instead.
+  Double-tap for hands-free recording; tap again to stop.
+- **On-device recognition:** uses Apple's SpeechAnalyzer. macOS downloads
+  the selected language's speech assets if they aren't already installed.
+- **Text cleanup:** removes fillers, recognises spoken “new line” and
+  “new paragraph”, and applies your dictionary and saved snippets.
+  [Harper](https://github.com/Automattic/harper) handles English spelling
+  and grammar without a language-model rewrite.
+- **Terminal defaults:** skips formatting and grammar cleanup in recognised
+  terminals. Learned English corrections and snippets still apply. Code
+  editors use the normal cleanup pipeline.
+- **Personal corrections:** edit a transcript in History to teach Chirp a
+  misheard word. Starter snippets and dictionary entries can be edited or
+  cleared.
+- **Paste last transcript:** an optional shortcut pastes your most recent
+  transcript again wherever the cursor is now.
+- **Live transcript:** optionally shows words in the bird's speech bubble
+  while you dictate from its toolbar. Off by default; downloads a separate
+  streaming model on first use.
+- **Notetaker:** records your mic and a meeting app's audio, separates
+  speakers, and saves a local transcript. You can request an on-device
+  summary for each note. Meeting live captions are off by default.
+- **Launch at login:** optional, in Settings.
 
 ## The wren
 
 <p align="center">
-  <img src="Resources/Pet/wren_idle.gif" alt="Idle" width="88">
-  <img src="Resources/Pet/wren_hop.gif" alt="Hop" width="88">
-  <img src="Resources/Pet/wren_listening.gif" alt="Listening" width="88">
-  <img src="Resources/Pet/wren_walk.gif" alt="Walking" width="88">
-  <img src="Resources/Pet/wren_chirp.gif" alt="Chirping" width="88">
+  <img src="Resources/Pet/wren_idle.gif" alt="Idle" title="Idle" width="64">
+  <img src="Resources/Pet/wren_idle_preen.gif" alt="Preening" title="Preening" width="64">
+  <img src="Resources/Pet/wren_idle_tailflick.gif" alt="Tail flick" title="Tail flick" width="64">
+  <img src="Resources/Pet/wren_listening.gif" alt="Listening" title="Listening" width="64">
+  <img src="Resources/Pet/wren_processing.gif" alt="Processing" title="Processing" width="64">
+  <br>
+  <img src="Resources/Pet/wren_activated.gif" alt="Activated" title="Activated" width="64">
+  <img src="Resources/Pet/wren_hop.gif" alt="Hop" title="Hop" width="64">
+  <img src="Resources/Pet/wren_walk.gif" alt="Walking" title="Walking" width="64">
+  <img src="Resources/Pet/wren_hover.gif" alt="Hover" title="Hover" width="64">
+  <img src="Resources/Pet/wren_chirp.gif" alt="Chirping" title="Chirping" width="64">
+  <br>
+  <img src="Resources/Pet/wren_flight.gif" alt="Flying" title="Flying" width="64">
+  <img src="Resources/Pet/wren_side_perch.gif" alt="Side perch" title="Side perch" width="64">
+  <img src="Resources/Pet/wren_sleep.gif" alt="Sleeping" title="Sleeping" width="64">
+  <img src="Resources/Pet/wren_blink.gif" alt="Blink" title="Blink" width="64">
+  <img src="Resources/Pet/wren_celebrate.gif" alt="Celebrating" title="Celebrating" width="64">
 </p>
 
-Chirp's mascot is a splendid fairy-wren — a small, vividly blue Australian
-songbird — drawn as 32×32 pixel art on a ten-colour palette, with a
-silhouette outline on every frame so it stays legible against any
-wallpaper.
+The mascot is a splendid fairy-wren, drawn as transparent 32×32 pixel art.
+It listens while you record, tilts its head while processing, and preens,
+blinks, or flicks its tail while resting. Click it to open Chirp, or use
+its toolbar to dictate and read the result in a speech bubble.
 
-It's not just a logo. A floating wren sits on your desktop and reacts to
-what the app is doing: alert while listening, head-tilted while working,
-preening and tail-flicking when idle. It shows what you just dictated in
-a speech bubble you can copy or discard from, so a quick dictation never
-needs the main window. Left to its own devices it hops and flies to new
-spots on screen — or you can pin it in place from its own toolbar.
+Turn on wandering to let it hop and fly around your screen, or pin it in
+place. Idle animations pause when hidden, in Low Power Mode, or under
+thermal pressure.
+
+All 15 updated animations are shown above. Sleeping, side-perching, and
+celebration are included in the asset set for future interactions; the
+app doesn't trigger those three yet. See the
+[animation notes](Resources/Pet/README.md) for states and timing.
 
 ## Privacy
 
-Everything runs on this Mac. Recognition is Apple's on-device
-SpeechAnalyzer, and every cleanup pass after it — filler removal, your
-dictionary, learned corrections, Harper's grammar lint — is deterministic
-local code, not a model. The one exception is Notetaker's optional
-Summarize, which you trigger yourself and which runs on Apple
-Intelligence, still on-device.
+Audio, transcripts, and cleanup stay on your Mac. Dictation uses Apple's
+on-device speech engine; formatting, personal corrections, snippets, and
+Harper run locally. Optional meeting summaries use Apple Intelligence
+on-device.
 
-Chirp makes no network requests except macOS's own one-time speech-asset
-download and a version check against GitHub at launch. The one exception
-is opt-in: turning on **Live transcript while speaking** fetches a ~220 MB
-streaming model the first time it runs. It's off by default for exactly
-that reason. Transcripts live only in
-`~/Library/Application Support/Chirp/`.
+Network access is used to check GitHub for updates and to download missing
+models: Apple's speech assets, speech-detection models, the optional live
+transcript model, and meeting speaker-separation models. Audio isn't sent
+to a transcription service.
+
+Chirp stores history, notes, and personal dictionaries in
+`~/Library/Application Support/Chirp/`. Preferences use the `local.chirp`
+UserDefaults domain.
 
 ## Building from source
+
+Requires full Xcode with Swift 6.2 or later, rather than only Command Line
+Tools.
 
 ```bash
 git clone https://github.com/jaclyntan/chirp.git
 cd chirp
-./scripts/make_signing_cert.sh   # once — keeps permissions across rebuilds
-./scripts/make_app.sh            # builds build/Chirp.app
+./scripts/make_signing_cert.sh   # once, to keep permissions across rebuilds
+./scripts/make_app.sh            # builds and signs build/Chirp.app
 open build/Chirp.app
 ```
 
-Requires full Xcode, not just Command Line Tools — SwiftUI's macros are
-Xcode-only compiler plugins. Build, test, architecture and design notes
-are in [CLAUDE.md](CLAUDE.md).
+The app uses SwiftUI and AppKit in a Swift package. Harper ships as a
+vendored xcframework; FluidAudio supplies speech detection, live preview,
+and meeting speaker separation. Third-party licences are in
+[NOTICE.md](NOTICE.md).
 
-## Architecture
-
-Swift Package, SwiftUI + AppKit. Harper is vendored as a prebuilt
-xcframework under `Vendor/` with its Rust source included; FluidAudio is a
-remote SwiftPM dependency used for voice-activity detection and
-Notetaker's speaker separation. See [NOTICE.md](NOTICE.md) for
-third-party licences.
-
-```
-HotkeyMonitor  →  AudioRecorder  →  Transcriber (Apple SpeechAnalyzer)
+```text
+HotkeyMonitor → AudioRecorder → Transcriber (Apple SpeechAnalyzer)
                                         ↓
         TextFormatter → LearnedStore → SnippetStore → HarperChecker
                                         ↓
                         TextInserter (clipboard + ⌘V)
 ```
 
-Recognition engines trialled and removed (WhisperKit, whisper.cpp,
-Parakeet) are written up in
-[docs/removed-engines.md](docs/removed-engines.md).
-[CHANGELOG.md](CHANGELOG.md) covers what changed in each release.
-[Performance notes](docs/performance.md) describe memory limits, lightweight
-defaults, and verification on entry-level Macs.
+The cleanup path varies by language and target app, as described above.
 
-## Credits
+- [Build, test, and architecture notes](CLAUDE.md)
+- [Changelog](CHANGELOG.md)
+- [Performance notes](docs/performance.md)
+- [Previously trialled recognition engines](docs/removed-engines.md)
+
+## Credits and licence
 
 Chirp began as a fork of
-[Murmur](https://github.com/janisbelozerovs-dev/murmur) and has since
-diverged substantially — several recognition engines and features were
-removed, and the interface was rebuilt. Murmur is MIT-licensed and its
-copyright notice is retained in [LICENSE](LICENSE). Thanks to its authors
-for the foundation.
-
-## License
+[Murmur](https://github.com/janisbelozerovs-dev/murmur). Its interface and
+recognition pipeline have since changed substantially. Thanks to the
+Murmur authors for the foundation; their copyright notice is retained in
+[LICENSE](LICENSE).
 
 [MIT](LICENSE). Not affiliated with Apple.

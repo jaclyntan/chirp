@@ -271,6 +271,151 @@
         "wren_chirp_04.png"
       ],
       "gif_preview": "wren_chirp.gif"
+    },
+    "flight": {
+      "loop": true,
+      "frame_count": 6,
+      "frame_durations_ms": [
+        70,
+        60,
+        70,
+        90,
+        70,
+        70
+      ],
+      "notes": "Loopable sustained wingbeat, ~460ms per cycle \u2014 plays while the bird is actually airborne and travelling (as opposed to the ground-hop `walk`), legs tucked the whole time.",
+      "aseprite": "wren_flight.aseprite",
+      "sprite_sheet": "wren_flight_sheet.png",
+      "sprite_sheet_frame_size": [
+        32,
+        32
+      ],
+      "sprite_sheet_layout": "horizontal strip, left to right",
+      "numbered_frames": [
+        "wren_flight_00.png",
+        "wren_flight_01.png",
+        "wren_flight_02.png",
+        "wren_flight_03.png",
+        "wren_flight_04.png",
+        "wren_flight_05.png"
+      ],
+      "gif_preview": "wren_flight.gif"
+    },
+    "side_perch": {
+      "loop": true,
+      "frame_count": 7,
+      "frame_durations_ms": [
+        90,
+        110,
+        120,
+        140,
+        650,
+        140,
+        650
+      ],
+      "notes": "Land-and-settle, ~900ms in, then loops a gentle held-cling sway indefinitely while the bird stays on the vertical edge.",
+      "aseprite": "wren_side_perch.aseprite",
+      "sprite_sheet": "wren_side_perch_sheet.png",
+      "sprite_sheet_frame_size": [
+        32,
+        32
+      ],
+      "sprite_sheet_layout": "horizontal strip, left to right",
+      "numbered_frames": [
+        "wren_side_perch_00.png",
+        "wren_side_perch_01.png",
+        "wren_side_perch_02.png",
+        "wren_side_perch_03.png",
+        "wren_side_perch_04.png",
+        "wren_side_perch_05.png",
+        "wren_side_perch_06.png"
+      ],
+      "gif_preview": "wren_side_perch.gif"
+    },
+    "sleep": {
+      "loop": true,
+      "frame_count": 4,
+      "frame_durations_ms": [
+        1300,
+        1400,
+        1300,
+        1400
+      ],
+      "notes": "Slow breathing loop, ~5s per cycle \u2014 eyes stay shut the whole time. A static twig nest (draw_nest) is drawn underneath the bird on every frame, per request \u2014 it doesn't animate on its own, just sits under whatever the bird's own breathing/tail motion is doing that frame.",
+      "aseprite": "wren_sleep.aseprite",
+      "sprite_sheet": "wren_sleep_sheet.png",
+      "sprite_sheet_frame_size": [
+        32,
+        32
+      ],
+      "sprite_sheet_layout": "horizontal strip, left to right",
+      "numbered_frames": [
+        "wren_sleep_00.png",
+        "wren_sleep_01.png",
+        "wren_sleep_02.png",
+        "wren_sleep_03.png"
+      ],
+      "gif_preview": "wren_sleep.gif"
+    },
+    "blink": {
+      "loop": false,
+      "frame_count": 5,
+      "frame_durations_ms": [
+        70,
+        50,
+        50,
+        60,
+        110
+      ],
+      "notes": "One-shot head-twitch-and-blink, ~340ms, breaks up long idle holds.",
+      "aseprite": "wren_blink.aseprite",
+      "sprite_sheet": "wren_blink_sheet.png",
+      "sprite_sheet_frame_size": [
+        32,
+        32
+      ],
+      "sprite_sheet_layout": "horizontal strip, left to right",
+      "numbered_frames": [
+        "wren_blink_00.png",
+        "wren_blink_01.png",
+        "wren_blink_02.png",
+        "wren_blink_03.png",
+        "wren_blink_04.png"
+      ],
+      "gif_preview": "wren_blink.gif"
+    },
+    "celebrate": {
+      "loop": false,
+      "frame_count": 8,
+      "frame_durations_ms": [
+        70,
+        60,
+        70,
+        60,
+        60,
+        60,
+        70,
+        150
+      ],
+      "notes": "Single-shot double-hop celebration, ~610ms total. Do not loop \u2014 return to idle after.",
+      "aseprite": "wren_celebrate.aseprite",
+      "sprite_sheet": "wren_celebrate_sheet.png",
+      "sprite_sheet_frame_size": [
+        32,
+        32
+      ],
+      "sprite_sheet_layout": "horizontal strip, left to right",
+      "numbered_frames": [
+        "wren_celebrate_00.png",
+        "wren_celebrate_01.png",
+        "wren_celebrate_02.png",
+        "wren_celebrate_03.png",
+        "wren_celebrate_04.png",
+        "wren_celebrate_05.png",
+        "wren_celebrate_06.png",
+        "wren_celebrate_07.png"
+      ],
+      "gif_preview": "wren_celebrate.gif"
     }
   }
 }
