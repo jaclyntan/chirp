@@ -1,5 +1,47 @@
 # Changelog
 
+## v1.2.0 — 2026-11-27
+
+This release is about dictation holding up when your Mac is under heavy
+load, and about leaving a record when something goes wrong.
+
+### Changed
+
+- A transcription that takes too long is no longer waited on forever.
+  Chirp stops waiting after 20 seconds plus twice the recording's length,
+  keeps the recording, and tries it again later: a couple of minutes on,
+  after your next dictation goes through, or at the next launch. A
+  recovered dictation is saved to History and never pasted. Saved
+  recordings that still fail after three more tries, or are more than a
+  week old, are discarded.
+- A transcript that is ready long after you stopped talking, or after you
+  have switched to another app, is put on the clipboard with a message
+  instead of being pasted wherever the cursor happens to be by then. It is
+  saved to History either way.
+- Dictations are transcribed one at a time, in the order you recorded
+  them.
+- Text cleanup and History saves run in the background, so the HUD and
+  the bird don't freeze while a dictation finishes.
+- The HUD no longer shows the rough live transcript. It shows only
+  Listening or Transcribing and the app you're dictating into.
+- The live transcript only runs for dictations started from the bird's mic
+  button, the one place it appears. Dictations started with the hotkey no
+  longer load its model. If it falls behind while you talk, it turns off
+  for 10 minutes and frees its memory. It also pauses when macOS reports
+  memory pressure.
+
+### Diagnostics
+
+- Chirp keeps its own diagnostics in
+  `~/Library/Application Support/Chirp/diagnostics/` for 14 days. They
+  contain the same events as the system log, without transcript text, plus
+  a note of memory, swap, load and temperature at each recording stop,
+  timeout and freeze.
+- If Chirp didn't quit cleanly last time, the next launch says so and
+  copies in any crash report macOS wrote.
+- If Chirp's main thread stops responding for 3 seconds or more, it saves a
+  record of what every thread was doing at the time.
+
 ## v1.1.2 — 2026-10-13
 
 This release changes how the dictation key and microphone capture are
