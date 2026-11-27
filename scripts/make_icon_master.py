@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Composes the 1024x1024 app-icon master: the wren on the brand blue field.
 
-Writes Resources/ChirpMascot.png (what scripts/make_icon.sh rasterises into
-the .icns) and Resources/Icon/chirp_icon_master.png (the design copy).
+Writes Resources/ChirpMascot.png, which scripts/make_icon.sh rasterises into
+the .icns.
 
 The bird itself comes from the pet's own native 32x32 sprite, scaled with
 nearest-neighbour so it stays true pixel art rather than a blurred upscale
@@ -17,8 +17,7 @@ from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parent.parent
 SPRITE = ROOT / "Sources/Chirp/Resources/Pet/wren_idle_00.png"
-OUTPUTS = [ROOT / "Resources/ChirpMascot.png",
-           ROOT / "Resources/Icon/chirp_icon_master.png"]
+OUTPUTS = [ROOT / "Resources/ChirpMascot.png"]
 
 SIZE = 1024
 # The brand field, sampled from Resources/Promo/*.png so the icon and the

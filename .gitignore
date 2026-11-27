@@ -5,9 +5,6 @@ DerivedData/
 *.xcodeproj
 Vendor/harper-ffi/target/
 
-# Benchmark-only Python venv (scripts/benchmark_engines.py, TheWhisper row)
-.venv-thewhisper/
-
 # Machine-local tool config (contains local paths)
 .claude/
 

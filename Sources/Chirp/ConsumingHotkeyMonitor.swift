@@ -29,8 +29,6 @@ final class ConsumingHotkeyMonitor {
         self.combination = combination
     }
 
-    var isRunning: Bool { tap != nil }
-
     func start() {
         stop()
         guard AXIsProcessTrusted() else { return }

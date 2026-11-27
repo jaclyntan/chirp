@@ -23,21 +23,6 @@ enum TextInserter {
         }
     }
 
-    /// Copies the current selection in the frontmost app by synthesizing ⌘C.
-    /// Returns the selected text, or nil if nothing was copied in time.
-    static func copySelection() async -> String? {
-        let pasteboard = NSPasteboard.general
-        let changeCount = pasteboard.changeCount
-        sendKeystroke(kVK_ANSI_C, flags: .maskCommand)
-        for _ in 0..<10 {
-            try? await Task.sleep(nanoseconds: 50_000_000)
-            if pasteboard.changeCount != changeCount {
-                return pasteboard.string(forType: .string)
-            }
-        }
-        return nil
-    }
-
     static func saveClipboard() -> SavedClipboard {
         NSPasteboard.general.pasteboardItems?.compactMap { item -> [String: Data]? in
             var copy: [String: Data] = [:]

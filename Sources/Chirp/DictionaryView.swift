@@ -198,10 +198,6 @@ struct DictionaryPage: View {
     }
 
 
-    private var learnedCorrectionsCount: Int {
-        LearnedStore.load().corrections.count
-    }
-
     private var visibleRows: [DictionaryRow] {
         let term = searchText.trimmingCharacters(in: .whitespaces).lowercased()
         guard !term.isEmpty else { return rows }

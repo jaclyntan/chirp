@@ -313,24 +313,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Obse
         return true
     }
 
-    /// whisper.cpp's Metal backend keeps a static C++ registry of Metal
-    /// devices. Something in its cleanup path aborts when that registry's
-    /// destructor runs during normal process exit — `exit()` finalizes C++
-    /// static-storage objects after AppKit has already begun tearing down,
-    /// and ggml's Metal teardown doesn't tolerate that ordering. It only
-    /// fires once whisper.cpp has actually been used this session, but from
-    /// then on it hits on every ordinary quit — confirmed via a real crash
-    /// report (`ggml_metal_rsets_free` → `ggml_abort` → SIGABRT, inside the
-    /// vector-of-devices destructor called from `__cxa_finalize_ranges`).
+    /// Every termination route (Cmd+Q, the Quit menu item, an AppleEvent,
+    /// `relaunch()`'s `NSApp.terminate(nil)`, logout) funnels through here,
+    /// so this is the one place that flushes what must survive: defaults,
+    /// queued History writes, and the diagnostics clean-quit marker.
     ///
-    /// The bug is inside the vendored library, not this app's code, so
-    /// rather than let AppKit's normal `terminate:` → `exit()` path reach
-    /// that destructor at all, everything this app actually needs saved is
-    /// flushed here and the process ends immediately via `_exit`, which
-    /// skips atexit handlers and C++ static destructors entirely. Every
-    /// termination route — Cmd+Q, the Quit menu item, an AppleEvent, and
-    /// `relaunch()`'s `NSApp.terminate(nil)` — funnels through this one
-    /// delegate method first, so this is the single place that needs it.
+    /// Then `_exit` rather than AppKit's normal `exit()`. That was first
+    /// needed for whisper.cpp, whose Metal teardown aborted in C++ static
+    /// destructors on every quit (see docs/removed-engines.md). The engine
+    /// is gone, but skipping static teardown is still the predictable exit:
+    /// nothing left after the flushes needs it.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         UserDefaults.standard.synchronize()
         HistoryStore.flushPendingWrites()

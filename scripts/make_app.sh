@@ -30,8 +30,8 @@ if [ -d ".build/release/Chirp_Chirp.bundle/Pet" ]; then
     cp .build/release/Chirp_Chirp.bundle/Pet/*.json "$APP/Contents/Resources/Pet/"
 fi
 
-# App icon (source: Resources/Chirp.svg — rerun scripts/make_icon.sh to
-# regenerate Resources/Chirp.icns after changing the SVG).
+# App icon (source: Resources/ChirpMascot.png — rerun scripts/make_icon.sh to
+# regenerate Resources/Chirp.icns after changing it).
 if [ -f "Resources/Chirp.icns" ]; then
     cp Resources/Chirp.icns "$APP/Contents/Resources/Chirp.icns"
 fi

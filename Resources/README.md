@@ -8,7 +8,6 @@ and palette as the desktop pet (`Sources/Chirp/Resources/Pet/`).
 | `Resources/ChirpMascot.png` | The 1024×1024 master. `scripts/make_icon.sh` reads this. |
 | `Resources/Chirp.icns` | Generated from the master; copied into the `.app` by `scripts/make_app.sh` and named by `Info.plist`'s `CFBundleIconFile`. |
 | `Resources/Chirp.svg` | The wren vector mark — no background, no wordmark. |
-| `Resources/Icon/` (this folder) | Design sources: the master PNG and the full `.iconset`. |
 | `Resources/Promo/` | Promo images — square, 16:9, 9:16. The 16:9 one is the README banner. |
 
 ## Regenerating the icon

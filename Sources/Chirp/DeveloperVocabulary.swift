@@ -134,103 +134,23 @@ enum DeveloperVocabulary {
         ("m. c. p.", "MCP"),
     ]
 
-    /// Per-term *looser* similarity floors for `ParakeetEngine`'s CTC-based
-    /// vocabulary-boosting rescorer — see `CustomVocabularyTerm.minSimilarity`
-    /// in the FluidAudio checkout. `ParakeetEngine`'s global floor (0.85) is
-    /// deliberately strict; an entry here loosens it back down for one
-    /// specific, individually-tested term.
-    ///
-    /// Safe-by-default, not risky-by-default: this vocabulary is full of
-    /// short brand names built from ordinary English words — "Supabase" is
-    /// "Supa" + "base", "Codex"/"Xcode" are both "code" plus one affix —
-    /// and short common words measure textually close enough to them that
-    /// a floor loose enough to *fix* a mis-hearing is often also loose
-    /// enough to *cause* one on an unrelated, correctly-heard word. Direct
-    /// testing (`say`-synthesized audio through the real rescorer) found
-    /// three such collisions just among the ~20 terms tried by hand:
-    /// "database" → "Supabase" (0.63 similarity), "code" → "Codex"/"Xcode"
-    /// (0.80 each), "cloud" → "Claude" (0.67) — the last two only visible
-    /// once testing moved from a short hand-picked term list to Chirp's
-    /// full ~145-term vocabulary, so there's no reason to assume those
-    /// three are the only ones among terms not yet tested this way. A
-    /// global floor loose enough to admit any of these also admits the
-    /// fix this mechanism exists for ("Superbase" → "Supabase", 0.78
-    /// similarity) — they're too close together for one global number to
-    /// separate cleanly. Rather than hunt for every future collision by
-    /// hand and deny-list each one (already missed "Xcode" once doing
-    /// exactly that), the global floor stays high enough to be safe
-    /// against terms nobody has tested yet, and only a term with its own
-    /// direct, positive test result gets listed here to loosen it back
-    /// down. "Supabase" is the one term with that evidence so far — see
-    /// `ParakeetEngine.transcribeWithVocabularyBoosting`'s doc comment for
-    /// the full measurements this is built on.
-    ///
-    /// 0.68, not 0.75: a live dictation still produced "super base" (two
-    /// words, 0.70 similarity to "Supabase") after the 0.75 cut — narrower
-    /// than "Superbase" (one word, 0.78) and just above 0.75, so the fix
-    /// missed it by a small margin. Every confirmed-dangerous collision
-    /// found for this term still sits at 0.63 or below ("database",
-    /// "separate", "suitcase" — see the doc comment above), so there's
-    /// 0.05 of headroom to drop the floor without reopening any of them.
-    /// Caveat: `say`-synthesized speech won't reliably reproduce "super
-    /// base" as literal decoded text (it collapses to the same "Superbase"
-    /// hypothesis Parakeet already gets right), so unlike the rest of this
-    /// file this specific value couldn't be directly confirmed by the
-    /// audio-based testing this file otherwise relies on — it's a
-    /// text-similarity calculation plus the safety margin against known
-    /// collisions, not a repeated measurement. `LearnedStore.corrections`'
-    /// own `("super base", "Supabase")` entry is the other, independent
-    /// safety net for this exact phrase if the acoustic floor still misses
-    /// it in practice.
-    ///
-    /// Only reachable when `ParakeetEngine.transcribe`'s boosting path
-    /// runs `UnifiedAsrManager` (English dictation with developer
-    /// vocabulary active) — see that method's doc comment. A non-English
-    /// dictation always gets the plain decode with no rescoring at all;
-    /// `LearnedStore`'s exact-phrase/fuzzy corrections are the only
-    /// remaining safety net for a mis-hearing there.
-    static let parakeetMinSimilarityOverrides: [String: Float] = [
-        "Supabase": 0.68,
-    ]
-
-    /// Known mis-hearing spellings per term, for FluidAudio's own
-    /// `CustomVocabularyTerm.aliases` — derived from `corrections` above
-    /// rather than duplicated, so there's one list of "known variants of
-    /// Supabase" feeding both the deterministic post-hoc correction and
-    /// this acoustic-stage one, not two that can drift apart.
-    ///
-    /// This is a materially different mechanism from
-    /// `parakeetMinSimilarityOverrides`, not a restatement of it: an alias
-    /// is its own comparison target inside FluidAudio's rescorer (see
-    /// `VocabularyRescorer+Utilities.buildNormalizedForms`), scored against
-    /// the decoded span directly, rather than requiring the span to be
-    /// textually close to the canonical term itself. That's what lets it
-    /// reach mis-hearings the similarity override can't: "super bass"
-    /// measures only 0.60 against "Supabase" (below "database"'s own 0.63,
-    /// so no shared threshold can safely admit it that way — see the
-    /// override's own doc comment) — but registered as an alias, the
-    /// rescorer compares the decoded span against "super bass" itself, a
-    /// near-exact match, independent of how far that string sits from
-    /// "Supabase". Confirmed against altic-dev/FluidVoice (a comparable
-    /// open-source dictation app) actually shipping this exact mechanism
-    /// for their own vocabulary boosting, not just a theoretical reading
-    /// of FluidAudio's API — see
-    /// [[project_chirp_fluidvoice_competitor_research]].
-    static var parakeetAliases: [String: [String]] {
-        Dictionary(grouping: corrections, by: \.intended)
-            .mapValues { $0.map(\.heard) }
-    }
-
     /// Terms `LearnedStore.apply(in:includeDeveloperVocabulary:)` fuzzy-
     /// matches against arbitrary decoded text (`fuzzyCorrect(in:)` below),
     /// keyed by the minimum similarity a candidate word/phrase must clear
-    /// — same 0...1 Levenshtein measure as `parakeetMinSimilarityOverrides`
-    /// ("Superbase" vs "Supabase" → 0.78), and currently the same 0.68
-    /// value for the one term both apply to, though the two thresholds are
-    /// independent and could diverge: this layer has no acoustic
-    /// corroboration to lean on the way Parakeet's CTC rescorer does, it's
-    /// a pure text-similarity check against whatever the engine already
-    /// decided the word was.
+    /// on a 0...1 Levenshtein measure ("Superbase" vs "Supabase" → 0.78).
+    /// It's a pure text-similarity check against whatever the engine
+    /// already decided the word was, with no acoustic corroboration.
+    ///
+    /// Why thresholds are per-term and audited, not one global number:
+    /// this vocabulary is full of short brand names built from ordinary
+    /// words, and short common words sit close to them. Testing with
+    /// `say`-synthesized audio (when this list also fed the since-removed
+    /// Parakeet rescorer, see docs/removed-engines.md) found real
+    /// collisions: "database" → "Supabase" (0.63), "code" → "Codex"/"Xcode"
+    /// (0.80), "cloud" → "Claude" (0.67). The fixes wanted sit right among
+    /// them ("Superbase" 0.78, "super base" 0.70), so no single floor
+    /// separates them. Supabase's 0.68 clears both fixes and keeps 0.05 of
+    /// headroom above its closest known collision, "database".
     ///
     /// Built after enumerating individual mis-hearing spellings by hand
     /// stopped scaling — five variants of "Supabase" found this way
@@ -241,8 +161,7 @@ enum DeveloperVocabulary {
     /// than an exact, auditable lookup — which is exactly why the
     /// threshold matters so much and why this only runs for terms listed
     /// here, not the full ~150-term `terms` list: every one of these still
-    /// needs the same false-positive audit `parakeetMinSimilarityOverrides`
-    /// went through before being added.
+    /// needs that same false-positive audit before being added.
     ///
     /// This does not replace `corrections`' exact-phrase list — it
     /// complements it. "super bass" measures only 0.60 against "Supabase",

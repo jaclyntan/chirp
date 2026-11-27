@@ -105,7 +105,6 @@ enum Palette {
 
     static let ink = Color(red: 0.145, green: 0.138, blue: 0.126)
     static let inkSoft = Color(red: 0.416, green: 0.416, blue: 0.424)
-    static let inkFaint = Color(red: 0.604, green: 0.620, blue: 0.608)
     static let onInk = Color.white
     static let warmInk = Color(red: 0.145, green: 0.138, blue: 0.126)
     static let warmInkSoft = Color(red: 0.416, green: 0.404, blue: 0.373)
