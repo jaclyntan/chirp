@@ -342,9 +342,9 @@ struct SettingsPage: View {
             fieldRow(
                 label: "Live transcript while speaking",
                 detail: "Shows a rough transcript in the wren's speech bubble as you "
-                    + "talk, when you start a dictation from its mic button. The real "
-                    + "transcript is still produced from the full recording "
-                    + "afterwards. Downloads a ~220 MB streaming model the first time "
+                    + "talk, when you start a dictation from its mic button (so it "
+                    + "needs the wren turned on). The real transcript is still produced "
+                    + "from the full recording afterwards. Downloads a ~220 MB streaming model the first time "
                     + "it runs — the only download Chirp ever makes beyond macOS's "
                     + "own speech assets.",
                 isLast: false

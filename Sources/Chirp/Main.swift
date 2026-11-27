@@ -71,11 +71,14 @@ struct ChirpMain {
             let meetingAudioPassed = await MeetingTranscriber.runSelfTest()
             let hallucinationPassed = HallucinationFilter.runSelfTest()
             let developerVocabPassed = DeveloperVocabulary.runSelfTest()
+            let resiliencePassed = await DictationResilience.runSelfTest()
+            let diagnosticsPassed = Diagnostics.runSelfTest()
             exit(formatterPassed && learnedPassed
                  && rewritePlanPassed && audioPassed && hallucinationPassed
                  && developerVocabPassed && audioQueuePassed && previewPassed
                  && meetingAudioPassed && powerPassed && spritePowerPassed
-                 && hotkeyPowerPassed && vadPassed && hudPassed ? 0 : 1)
+                 && hotkeyPowerPassed && vadPassed && hudPassed
+                 && resiliencePassed && diagnosticsPassed ? 0 : 1)
 
         case .vadCompare(let path):
             exit(await VadEngine.compareFileCheck(fileAt: URL(fileURLWithPath: path)) ? 0 : 1)

@@ -39,13 +39,36 @@ final class LivePreviewTranscriber {
     private var generation = 0
     private var lastText = ""
     private var sessionStartedAt: Date?
+    /// Set when a session falls behind real time. Until it passes, preview
+    /// stays off: on a Mac busy enough to fall behind once, the next
+    /// session would just reload the model and fall behind again, paying
+    /// for the load each time and competing with the real transcription.
+    private var cooldownUntil: ContinuousClock.Instant?
+    /// Consecutive sessions that overflowed before the model finished
+    /// loading. One slow cold start is normal (the budget is only 3 s of
+    /// audio); twice in a row means every load is slow, and each reload is
+    /// itself the memory churn worth avoiding.
+    private var loadOverflowStreak = 0
+    /// macOS has signalled memory pressure. Preview is optional, so it is
+    /// the first thing to give its memory back.
+    private var memoryConstrained = false
 
     private let loadPipeline: () async throws -> any PreviewInference
     private let idleDelay: Duration
+    private let cooldown: Duration
     var onUpdate: ((String) -> Void)?
+
+    /// Whether a new session would actually run. Callers check this before
+    /// wiring up audio, so a skipped session costs nothing per buffer.
+    var canRun: Bool {
+        guard !suspended, !memoryConstrained else { return false }
+        if let cooldownUntil, ContinuousClock.now < cooldownUntil { return false }
+        return true
+    }
 
     init() {
         idleDelay = .seconds(30)
+        cooldown = .seconds(600)
         loadPipeline = {
             let manager = StreamingEouAsrManager(chunkSize: Self.chunkSize)
             try await manager.loadModels()
@@ -53,13 +76,15 @@ final class LivePreviewTranscriber {
         }
     }
 
-    private init(idleDelay: Duration, loadPipeline: @escaping () async throws -> any PreviewInference) {
+    private init(idleDelay: Duration, cooldown: Duration = .seconds(600),
+                 loadPipeline: @escaping () async throws -> any PreviewInference) {
         self.idleDelay = idleDelay
+        self.cooldown = cooldown
         self.loadPipeline = loadPipeline
     }
 
     func preload() {
-        guard !suspended else { return }
+        guard canRun else { return }
         releaseTask?.cancel()
         Task {
             _ = try? await pipeline()
@@ -82,7 +107,7 @@ final class LivePreviewTranscriber {
     }
 
     func start() {
-        guard !suspended else { return }
+        guard canRun else { return }
         releaseTask?.cancel()
         generation += 1
         active = true
@@ -98,7 +123,16 @@ final class LivePreviewTranscriber {
         guard queue.append(buffer) else {
             overloaded = true
             queue.removeAll()
-            dictationLog.notice("livePreview: paused for this session; inference exceeded its audio budget")
+            let stillLoading = manager == nil
+            if stillLoading { loadOverflowStreak += 1 }
+            if !stillLoading || loadOverflowStreak >= 2 {
+                loadOverflowStreak = 0
+                cooldownUntil = ContinuousClock.now + cooldown
+                dictationLog.notice(
+                    "livePreview: fell behind real time (\(stillLoading ? "slow model loads" : "inference", privacy: .public)); off for \(Int(self.cooldown.components.seconds / 60)) min")
+            } else {
+                dictationLog.notice("livePreview: paused for this session; model still loading")
+            }
             return
         }
         guard !isDraining else { return }
@@ -153,6 +187,7 @@ final class LivePreviewTranscriber {
     }
 
     func stop() {
+        if active, !overloaded { loadOverflowStreak = 0 }
         active = false
         generation += 1
         pendingReset = true
@@ -176,12 +211,22 @@ final class LivePreviewTranscriber {
 
     func resume() { suspended = false }
 
+    /// Under memory pressure, stop starting sessions and drop the weights
+    /// as soon as nothing is using them. A session already running is left
+    /// to finish; it ends with the recording.
+    func setMemoryConstrained(_ value: Bool) {
+        guard memoryConstrained != value else { return }
+        memoryConstrained = value
+        if value { scheduleReleaseIfIdle() }
+    }
+
     /// Keep weights warm across adjacent dictations, then reclaim them.
     /// The task doesn't retain this controller during its idle wait.
     private func scheduleReleaseIfIdle() {
         guard !active, !isDraining else { return }
         releaseTask?.cancel()
-        let delay: Duration = suspended ? .zero : idleDelay
+        // Kept warm only if the next session could use it.
+        let delay: Duration = canRun ? idleDelay : .zero
         releaseTask = Task { [weak self] in
             try? await Task.sleep(for: delay)
             guard !Task.isCancelled, let self, !self.active, !self.isDraining else { return }
@@ -250,6 +295,45 @@ final class LivePreviewTranscriber {
         _ = await until { !bounded.isDraining }
         bounded.stop()
 
+        let coolingEngine = PreviewTestInference()
+        let cooling = LivePreviewTranscriber(idleDelay: .seconds(30), cooldown: .milliseconds(80)) { coolingEngine }
+        cooling.start()
+        cooling.enqueue(buffer(1))
+        _ = await until { await coolingEngine.waiting }
+        for _ in 0..<100 { cooling.enqueue(buffer(3)) }
+        check(!cooling.canRun, "a preview that fell behind stays off for the next session")
+        await coolingEngine.resume()
+        _ = await until { !cooling.isDraining }
+        cooling.stop()
+        check(await until { await coolingEngine.cleaned }, "a cooling-down preview releases its model at once")
+        cooling.start()
+        check(!cooling.active, "a session during cooldown does not start")
+        try? await Task.sleep(for: .milliseconds(100))
+        check(cooling.canRun, "preview comes back after its cooldown")
+
+        let gate = PreviewLoadGate()
+        let slowLoad = LivePreviewTranscriber(idleDelay: .seconds(30)) {
+            await gate.wait()
+            return PreviewTestInference()
+        }
+        slowLoad.start()
+        for _ in 0..<100 { slowLoad.enqueue(buffer(3)) }
+        check(slowLoad.canRun, "one slow cold start does not switch preview off")
+        slowLoad.stop()
+        slowLoad.start()
+        for _ in 0..<100 { slowLoad.enqueue(buffer(3)) }
+        check(!slowLoad.canRun, "two slow cold starts in a row do")
+        await gate.open()
+        _ = await until { !slowLoad.isDraining }
+        slowLoad.stop()
+
+        let pressured = LivePreviewTranscriber(idleDelay: .seconds(30)) { PreviewTestInference() }
+        pressured.setMemoryConstrained(true)
+        pressured.start()
+        check(!pressured.canRun && !pressured.active, "memory pressure keeps preview from starting")
+        pressured.setMemoryConstrained(false)
+        check(pressured.canRun, "preview returns when memory pressure clears")
+
         enum ExpectedFailure: Error { case load }
         var attempts = 0
         let retry = LivePreviewTranscriber(idleDelay: .seconds(30)) {
@@ -270,6 +354,23 @@ final class LivePreviewTranscriber {
 
 }
 
+
+/// Holds a test model load open until released.
+private actor PreviewLoadGate {
+    private var isOpen = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        guard !isOpen else { return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    func open() {
+        isOpen = true
+        waiters.forEach { $0.resume() }
+        waiters.removeAll()
+    }
+}
 
 /// Suspends only its first inference to exercise real actor reentrancy.
 private actor PreviewTestInference: PreviewInference {

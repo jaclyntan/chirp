@@ -154,6 +154,9 @@ Sources/Chirp/
   PetPanelController.swift  The floating wren: panel, wander/flight, bubble
   Transcriber.swift      Recognition; TextFormatter/LearnedStore/HarperChecker
                          are the cleanup chain applied after it
+  DictationResilience.swift  Recognition deadline, paste policy, pending
+                         recordings, main-thread stall watchdog
+  Diagnostics.swift      On-disk diagnostics file, `ChirpLogger`, system snapshots
 ```
 
 Runtime data (history, snippets, dictionary, learned corrections) lives in
@@ -221,6 +224,27 @@ its trigger out loud, so a preset that doesn't suit you costs nothing.
   `/usr/bin/log show --last 1h --predicate 'subsystem == "local.chirp"'`.
   `.info` lines are only visible with `--info`, and only while still in
   memory.
+- **Start with Chirp's own diagnostics, not the unified log.** On a busy
+  Mac the unified log rotates within hours. Chirp keeps 14 days in
+  `~/Library/Application Support/Chirp/diagnostics/`:
+  `chirp-<date>.log` has every `.notice`/`.error` line from `dictationLog`
+  (transcripts redacted, same as the unified log), a header per launch
+  (version, macOS, settings), and a `system` line at every recording stop,
+  timeout and stall (memory pressure, swap, load, thermal, Chirp's own
+  footprint). A launch after a crash or force-quit logs `did not quit
+  cleanly` and copies any crash report in as `crash-*.ips`. A main-thread
+  freeze of 3 s or more writes `sample-*.txt`, every thread's stack, via
+  `/usr/bin/sample`. That only works because the app isn't built with the
+  hardened runtime, so adding notarisation would need another approach.
+  Only the app writes here; CLI modes don't. Log through `dictationLog`
+  (a `ChirpLogger`) rather than a raw `Logger`, or the line never reaches
+  the file.
+- **Dictations that time out are kept, not lost.** Recognition is capped
+  by `PastePolicy.transcriptionLimit` (20 s + 2× the audio). A timed-out or
+  failed recording moves to `Application Support/Chirp/pending/` and is
+  retried later (launch, after the next success, or a few minutes on),
+  never pasted. A result that arrives late, or after you've switched apps,
+  goes to the clipboard instead of being pasted.
 - **Quit before rebuilding, and check the quit worked.** `make_app.sh`
   replaces `build/Chirp.app`; if the old copy is still running, `open`
   just brings that old process forward and you test the old code. After

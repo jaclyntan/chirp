@@ -711,7 +711,7 @@ private struct PetView: View {
                 // hotkey dictation is going straight into the field
                 // you're looking at, and a live bubble would sit on top
                 // of it.
-                if startedFromPill, Settings.livePreviewEnabled { showLiveBubble() }
+                if startedFromPill, app.livePreviewRunning { showLiveBubble() }
             }
             // Only a dictation started from the pill's mic button gets a
             // bubble. A hotkey dictation lands in whatever text field the

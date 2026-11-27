@@ -6,9 +6,12 @@ import SwiftUI
 
 /// Dictation-path tracing. The pipeline runs entirely while the app's own
 /// window is hidden behind whatever you're dictating into, so when it
-/// stalls there is otherwise nothing at all to inspect — read it back with:
-/// `log show --predicate 'subsystem == "local.chirp"' --last 10m`
-let dictationLog = Logger(subsystem: "local.chirp", category: "dictation")
+/// stalls there is otherwise nothing at all to inspect. `.notice` and
+/// above also go to Chirp's own diagnostics file (see `Diagnostics`), which
+/// outlives the unified log; both can be read back:
+/// `/usr/bin/log show --predicate 'subsystem == "local.chirp"' --last 10m`
+/// `~/Library/Application Support/Chirp/diagnostics/chirp-<date>.log`
+let dictationLog = ChirpLogger(category: "dictation")
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, ObservableObject {
@@ -18,7 +21,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Obse
     }
 
     // Observable state for the dashboard window.
-    @Published var uiState: UIState = .idle { didSet { updateIcon(); updateHUD() } }
+    @Published var uiState: UIState = .idle {
+        didSet {
+            updateIcon()
+            updateHUD()
+            stallWatchdog.setActive(uiState != .idle)
+        }
+    }
     @Published var isHandsFree = false { didSet { updateHUD() } }
     @Published var entries: [HistoryEntry] = []
     @Published private(set) var mainWindowVisible = false
@@ -37,7 +46,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Obse
         set {
             guard previewState.text != newValue else { return }
             previewState.text = newValue
-            statusHUD.setLiveText(newValue)
         }
     }
     let activity = RuntimeActivity()
@@ -113,6 +121,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Obse
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        Diagnostics.shared.startSession(
+            settings: [
+                ("hotkey", Settings.hotkey.rawValue),
+                ("locale", Settings.localeIdentifier),
+                ("livePreview", String(Settings.livePreviewEnabled)),
+                ("wren", String(Settings.petEnabled)),
+                ("handsFreeAutoStop", String(Settings.handsFreeAutoStop)),
+                ("accessibility", String(AXIsProcessTrusted())),
+            ],
+            pendingRecordings: pendingRecordings.items().count)
+        stallWatchdog.start()
         configurePowerLifecycle()
         FontLoader.registerManrope()
         // Pinned to light always — dark mode support (a System/Light/Dark
@@ -147,7 +166,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Obse
         // With preview explicitly enabled, the model's cold
         // start is seconds long, and paying it on the first dictation
         // means the preview misses the very words it exists to show.
-        if Settings.livePreviewEnabled { livePreview.preload() }
+        if Settings.livePreviewEnabled, Settings.petEnabled { livePreview.preload() }
         if Settings.hasCompletedOnboarding {
             showMainWindow()
             Task {
@@ -187,11 +206,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Obse
 
         pasteLastHotkeyMonitor.onTrigger = { [weak self] in self?.pasteLastTranscript() }
         refreshPasteLastHotkey()
+
+        // Recordings that timed out, or were still waiting when Chirp last
+        // quit. Not straight away: launch is busy enough already.
+        pendingRecordings.pruneExpired()
+        schedulePendingRetry(after: 20)
     }
 
     private func configurePowerLifecycle() {
         activity.onSleep = { [weak self] in self?.prepareForSystemSleep() }
         activity.onWake = { [weak self] in self?.recoverFromSystemSleep() }
+        activity.onMemoryPressureChange = { [weak self] constrained in
+            dictationLog.notice(
+                "memory pressure: \(constrained ? "high, live preview off" : "back to normal", privacy: .public)")
+            self?.livePreview.setMemoryConstrained(constrained)
+            Diagnostics.shared.snapshot("pressure")
+        }
         activity.onAmbientChange = { [weak self] suspended in
             guard let self else { return }
             if suspended { self.notetaker.detector.stopWatching() }
@@ -303,6 +333,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Obse
     /// delegate method first, so this is the single place that needs it.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         UserDefaults.standard.synchronize()
+        HistoryStore.flushPendingWrites()
+        Diagnostics.shared.endSession()
         _exit(0)
     }
 
@@ -456,6 +488,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Obse
     func setPetEnabled(_ enabled: Bool) {
         Settings.petEnabled = enabled
         petPanel.refreshEnabled(app: self)
+        if enabled { warmLivePreview() }
     }
 
     /// Language codes the active recognition engine can actually
@@ -606,6 +639,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Obse
 
     private var recordingStartedAt: Date?
     private var recordingTargetBundleID: String?
+    /// Whether the recording in flight has a live preview running. Read by
+    /// the wren to decide on a live bubble; false while preview is cooling
+    /// down or under memory pressure even if the setting is on.
+    private(set) var livePreviewRunning = false
+
+    private let pendingRecordings = PendingRecordingStore()
+    private var transcriptionTail: Task<Void, Never>?
+    private var queuedTranscriptions = 0
+    private var retryingPendingIDs: Set<String> = []
+    private var pendingRetryTask: Task<Void, Never>?
+    private let stallWatchdog = MainThreadStallWatchdog()
 
     /// Bumped each time a recording actually starts. A transcription task
     /// remembers the value it was started under, so when it finishes it can
@@ -631,7 +675,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Obse
     /// own hands-free stop.
     func togglePetDictation() {
         if uiState == .idle {
-            startRecording()
+            startRecording(fromPet: true)
             isHandsFree = true
             NSSound(named: "Pop")?.play()
         } else if uiState == .recording {
@@ -649,17 +693,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Obse
     /// first words, which on a short dictation means the preview shows
     /// nothing at all and looks broken.
     func warmLivePreview() {
-        guard Settings.livePreviewEnabled else { return }
+        guard Settings.livePreviewEnabled, Settings.petEnabled else { return }
         livePreview.preload()
     }
 
     private func stopLivePreview() {
+        livePreviewRunning = false
         recorder.onLivePreviewBuffer = nil
         livePreview.stop()
         livePreviewText = ""
     }
 
-    private func startRecording() {
+    /// `fromPet`: started from the wren's mic button — the only dictation
+    /// whose live preview has anywhere to appear (the wren's bubble).
+    private func startRecording(fromPet: Bool = false) {
         guard !activity.suspendsAmbientWork, uiState != .recording else { return }
         do {
             try recorder.start()
@@ -668,9 +715,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Obse
             let frontmost = NSWorkspace.shared.frontmostApplication
             recordingTargetBundleID = frontmost?.bundleIdentifier
             statusHUD.setTargetAppIcon(frontmost?.icon)
+            // Decided before `uiState` changes: the wren reads it then.
+            // Hotkey dictations get no preview at all: their text has
+            // nowhere to appear, and the model costs 300–470 MB.
+            let wantsPreview = Settings.livePreviewEnabled && fromPet
+            livePreviewRunning = wantsPreview && livePreview.canRun
+            if wantsPreview, !livePreviewRunning {
+                dictationLog.notice("livePreview: skipped this recording (cooling down or memory pressure)")
+            }
             uiState = .recording
             lastError = nil
-            if Settings.livePreviewEnabled {
+            if livePreviewRunning {
                 livePreviewText = ""
                 livePreview.start()
                 // `onLivePreviewBuffer`, not `onLiveBuffer`: the two run
@@ -703,9 +758,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Obse
             return
         }
         dictationLog.notice("record: stopped #\(self.dictationEpoch), transcribing")
+        // One line of machine state per dictation: cheap, and it is what
+        // tells "the Mac was drowning" apart from "Chirp got it wrong".
+        Diagnostics.shared.snapshot("stop #\(dictationEpoch)")
         NSSound(named: "Tink")?.play()
         uiState = .processing
-        let duration = recordingStartedAt.map { Date().timeIntervalSince($0) }
+        let stoppedAt = Date()
+        let duration = recordingStartedAt.map { stoppedAt.timeIntervalSince($0) }
         recordingStartedAt = nil
         let targetBundleID = recordingTargetBundleID
         recordingTargetBundleID = nil
@@ -747,191 +806,401 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, Obse
             // recognizer entirely here is what actually fixes it — no
             // amount of prompting talks a model out of a pattern this deep
             // in its training.
-            dictationLog.info("stop: no speech detected, skipping recognition")
+            //
+            // `.notice` so a dictation that "didn't pick up" can be told
+            // apart from one that was lost, after the fact.
+            dictationLog.notice("stop: #\(self.dictationEpoch) no speech detected, skipping recognition")
             uiState = .idle
             try? FileManager.default.removeItem(at: url)
             return
         }
 
-        let epoch = dictationEpoch
-        Task { [history] in
-            defer { try? FileManager.default.removeItem(at: url) }
-            await activity.waitUntilAwake()
-            // A second, sharper opinion on top of the RMS-based `hasSignal`
-            // gate just above — catches what raw amplitude can't, like a
-            // loud non-speech sound clearing the floor. Independent of
-            // whichever recognition engine is selected below.
-            if await vadEngine.hasNoDetectedSpeech(fileAt: url, activity: activity) {
-                dictationLog.info("recognize: VAD found no speech, skipping recognition")
-                finishProcessing(epoch: epoch)
-                return
+        enqueueTranscription(DictationJob(
+            url: url,
+            epoch: dictationEpoch,
+            sleepGeneration: generation,
+            insertResult: insertResult,
+            duration: duration,
+            stoppedAt: stoppedAt,
+            targetBundleID: targetBundleID,
+            frontmostAtStop: NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
+            pendingItem: nil))
+    }
+
+    // MARK: - Transcription queue
+
+    /// One finished recording on its way through recognition.
+    private struct DictationJob {
+        let url: URL
+        /// The recording's epoch, or nil for a retried saved recording,
+        /// which never owns `uiState`.
+        let epoch: Int?
+        let sleepGeneration: Int
+        let insertResult: Bool
+        let duration: TimeInterval?
+        let stoppedAt: Date
+        let targetBundleID: String?
+        let frontmostAtStop: String?
+        /// Set when this is a retry of a recording kept after a failure.
+        let pendingItem: PendingRecordingStore.Item?
+
+        var label: String {
+            if let epoch { return "#\(epoch)" }
+            return "retry \(pendingItem.map { String($0.id.prefix(8)) } ?? "?")"
+        }
+    }
+
+    /// Transcriptions run one at a time, in the order they were recorded.
+    /// Run in parallel on a busy Mac, they all slowed down together and
+    /// could land out of order. The deadline in `process` keeps one stuck
+    /// job from holding up the ones behind it.
+    private func enqueueTranscription(_ job: DictationJob) {
+        let previous = transcriptionTail
+        queuedTranscriptions += 1
+        if queuedTranscriptions > 1 {
+            dictationLog.notice(
+                "queue: \(job.label, privacy: .public) waits behind \(self.queuedTranscriptions - 1) earlier")
+        }
+        // Retries are background work; a fresh dictation is what you're
+        // waiting on, so it keeps the priority it inherits.
+        transcriptionTail = Task(priority: job.pendingItem == nil ? nil : .utility) {
+            await previous?.value
+            await self.process(job)
+            self.queuedTranscriptions -= 1
+        }
+    }
+
+    private func process(_ job: DictationJob) async {
+        await activity.waitUntilAwake()
+        let limit = PastePolicy.transcriptionLimit(forAudioSeconds: job.duration ?? 0)
+        let began = Date()
+        let raw: String?
+        do {
+            // nil means the VAD heard no speech.
+            raw = try await Deadline.run(seconds: limit) { [self] () -> String? in
+                // A second, sharper opinion on top of the RMS-based `hasSignal`
+                // gate just above — catches what raw amplitude can't, like a
+                // loud non-speech sound clearing the floor. Independent of
+                // whichever recognition engine is selected below.
+                if await vadEngine.hasNoDetectedSpeech(fileAt: job.url, activity: activity) {
+                    return nil
+                }
+                return try await recognize(fileAt: job.url, bundleID: job.targetBundleID)
             }
-            do {
-                dictationLog.info("recognize: start")
-                let raw = try await recognize(fileAt: url, bundleID: targetBundleID)
-                dictationLog.info("recognize: done, \(raw.count) chars")
-                let developerVocabulary = DictationDefaults.developerVocabularyEnabled(
-                    forBundleID: targetBundleID)
+        } catch {
+            keepForRetry(job, after: error)
+            finish(job)
+            return
+        }
+        discardAudio(of: job)
 
-                // Whisper-family engines hallucinate a small, specific set
-                // of sign-off phrases ("Thank you.") on near-silent audio
-                // that still clears the earlier signal-duration gate — the
-                // model's own confidence score doesn't catch this (measured:
-                // ~0.00002 "no speech" probability on a confidently
-                // hallucinated "Thank you."), so the output itself is
-                // checked directly. Caught here, before any further
-                // processing spends time or an LLM call on text that's
-                // about to be discarded anyway.
-                guard !HallucinationFilter.isLikelyHallucination(raw) else {
-                    dictationLog.error(
-                        // No `privacy: .public` on `raw`: that forced real
-                        // dictated speech into the unified log in cleartext,
-                        // where it persists and is collected by sysdiagnose.
-                        // The default redaction still records that a
-                        // discard happened, without the transcript itself.
-                        "recognize: discarded as a likely hallucination: \(raw)")
-                    finishProcessing(epoch: epoch)
-                    return
-                }
+        guard let raw else {
+            dictationLog.notice("recognize: \(job.label, privacy: .public) VAD found no speech, skipped")
+            finish(job)
+            return
+        }
+        dictationLog.notice(
+            "recognize: \(job.label, privacy: .public) done, \(raw.count) chars in \(Date().timeIntervalSince(began), format: .fixed(precision: 1)) s")
 
-                let style = DictationDefaults.style(forBundleID: targetBundleID)
-                dictationLog.info("style resolved: \(style.rawValue, privacy: .public)")
+        // Whisper-family engines hallucinate a small, specific set
+        // of sign-off phrases ("Thank you.") on near-silent audio
+        // that still clears the earlier signal-duration gate — the
+        // model's own confidence score doesn't catch this (measured:
+        // ~0.00002 "no speech" probability on a confidently
+        // hallucinated "Thank you."), so the output itself is
+        // checked directly. Caught here, before any further
+        // processing spends time or an LLM call on text that's
+        // about to be discarded anyway.
+        guard !HallucinationFilter.isLikelyHallucination(raw) else {
+            dictationLog.error(
+                // No `privacy: .public` on `raw`: that forced real
+                // dictated speech into the unified log in cleartext,
+                // where it persists and is collected by sysdiagnose.
+                // The default redaction still records that a
+                // discard happened, without the transcript itself.
+                "recognize: discarded as a likely hallucination: \(raw)")
+            finish(job)
+            return
+        }
 
-                // Personal-correction stores are English-only by nature:
-                // `LearnedStore` holds mishearing fixes, and `TextFormatter`'s
-                // dictionary holds spellings, both learned from past
-                // *English* dictations. Applied to another language, a short
-                // "heard" trigger (e.g. "up", "there") can exact-word-match a
-                // coincidental token in the transcript and get swapped for
-                // its English "intended" text — corrupting part of an
-                // otherwise-correct non-English sentence (this is what was
-                // silently reintroducing the Latvian-dictation bug even
-                // after Harper below was fixed). Harper has the same problem
-                // for the same reason, just for spelling/grammar instead of
-                // personal corrections.
-                let isEnglishDictation =
-                    String(Settings.localeIdentifier.prefix(while: { $0 != "-" }))
-                    .lowercased() == "en"
-                dictationLog.info(
-                    "locale gate: Settings.localeIdentifier=\(Settings.localeIdentifier, privacy: .public) isEnglishDictation=\(isEnglishDictation)")
+        // Off the main thread: milliseconds normally, but on a Mac deep in
+        // swap even this can stall the HUD and the wren.
+        let targetBundleID = job.targetBundleID
+        let formatted = await Task.detached(priority: .userInitiated) {
+            Self.cleanUp(raw, targetBundleID: targetBundleID)
+        }.value
+        dictationLog.info("pipeline done: \(formatted.count) chars")
 
-                // Tallied for Insights' "Fixes made by Chirp" card only —
-                // each count comes from a plain before/after read of
-                // `formatted` around a call already made below, never from
-                // changing what that call does or re-deriving its result.
-
-                var formatted: String
-                if style.skipsAllProcessing {
-                    // Raw: exact words, no cleanup, no AI. For terminals and
-                    // code editors, where "corrections" would be corruption.
-                    formatted = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if isEnglishDictation {
-                        formatted = LearnedStore.apply(
-                            in: formatted, includeDeveloperVocabulary: developerVocabulary)
-                    }
-                    formatted = SnippetStore.expand(in: formatted)
-                } else {
-                    formatted = TextFormatter(
-                        dictionary: isEnglishDictation ? TextFormatter.loadDictionary() : [:]
-                    ).format(raw)
-                    if isEnglishDictation {
-                        formatted = LearnedStore.apply(
-                            in: formatted, includeDeveloperVocabulary: developerVocabulary)
-                    }
-                    formatted = SnippetStore.expand(in: formatted)
-
-                    // Everything below needs the model, and the spoken
-                    // trigger must not be stripped out of the text unless
-                    // something is actually going to act on it.
-                    //
-                    // The on-device model rewrite pass that used to run
-                    // here (tone styles, note templates, Voice Profile)
-                    // is gone along with those three features — Style,
-                    // Templates, and Voice Profile were all cut, and
-                    // Raw mode (the one thing from that family worth
-                    // keeping) never needed the model at all: it's
-                    // handled entirely by `style.skipsAllProcessing`
-                    // above, before this branch is even reached. What's
-                    // left below (formatter, dictionary, learned
-                    // corrections, Harper) already covers ordinary
-                    // cleanup in ~20ms, against the 7-15s the model pass
-                    // measured at — removing it from every dictation's
-                    // default path was the whole point of this pass, not
-                    // just an option left off.
-
-                    // A fast, local, deterministic grammar pass — runs after
-                    // the LLM step (catching whatever it missed) but doesn't
-                    // depend on it: Harper needs no Apple Intelligence, so
-                    // this still improves grammar on Macs where the pass
-                    // above was skipped entirely. Milliseconds, not worth a
-                    // status message next to a multi-second LLM round-trip.
-                    //
-                    // English only — see `isEnglishDictation` above: Harper
-                    // hardcodes an English parser/dictionary, so it
-                    // "corrects" other languages' real words into the
-                    // nearest English one instead of leaving them alone.
-                    if !formatted.isEmpty, isEnglishDictation {
-                        formatted = HarperChecker.fix(
-                            formatted,
-                            vocabulary: LearnedStore.biasTerms(
-                                includeDeveloperVocabulary: developerVocabulary))
-                    }
-                }
-                dictationLog.info("pipeline done: \(formatted.count) chars")
-                if !formatted.isEmpty {
-                    history.add(formatted, duration: duration, targetBundleID: targetBundleID)
-                    entries = history.entries
-                    dictationLog.info("history: added, inserting text")
-                    if !insertResult || generation != sleepGeneration || activity.suspendsAmbientWork {
-                        dictationLog.info("history: preserved dictation across sleep; automatic paste skipped")
-                    } else if AXIsProcessTrusted() {
-                        // Dictating into Chirp's own window (Scratchpad,
-                        // Ask, Transforms' try-it box, …) is the one case
-                        // where the paste target and the app posting the
-                        // synthetic ⌘V are the same process. The HUD panels
-                        // are deliberately non-activating so they never
-                        // steal focus from *another* app mid-dictation —
-                        // but the several-second gap between "recording
-                        // stops" and "text is ready" is enough for Chirp
-                        // itself to lose active-app status in the interim
-                        // (e.g. the user's attention/pointer drifting to
-                        // another window), which the other-app path never
-                        // had to survive since it was never Chirp's status
-                        // to lose. Reactivating right before the paste
-                        // restores it without touching the window's own
-                        // first responder, which AppKit preserves across an
-                        // app losing and regaining active status.
-                        if targetBundleID == Bundle.main.bundleIdentifier {
-                            NSApp.activate(ignoringOtherApps: true)
-                        }
-                        TextInserter.insert(formatted)
-                    } else {
-                        // Can't synthesize ⌘V without Accessibility — never
-                        // fail silently: leave the transcript on the clipboard.
-                        let pasteboard = NSPasteboard.general
-                        pasteboard.clearContents()
-                        pasteboard.setString(formatted, forType: .string)
-                        lastError = "Accessibility isn't active for this build, " +
-                            "so the text was copied to your clipboard instead — " +
-                            "press ⌘V to paste it. Fix this in Settings."
-                        NSSound(named: "Basso")?.play()
-                    }
-                    rebuildMenu()
-                } else {
-                    // Previously a silent no-op: nothing pasted, nothing in
-                    // History, and no indication anything had gone wrong —
-                    // indistinguishable from the app being broken.
-                    lastError = "Nothing was transcribed — the recording came "
-                        + "through empty. Check the microphone is picking you up."
-                    NSSound(named: "Basso")?.play()
-                }
-            } catch {
-                dictationLog.error("FAILED: \(error.localizedDescription, privacy: .public)")
-                lastError = "Transcription failed: \(error.localizedDescription)"
+        guard !formatted.isEmpty else {
+            // Previously a silent no-op: nothing pasted, nothing in
+            // History, and no indication anything had gone wrong —
+            // indistinguishable from the app being broken.
+            if job.pendingItem == nil {
+                lastError = "Nothing was transcribed — the recording came "
+                    + "through empty. Check the microphone is picking you up."
                 NSSound(named: "Basso")?.play()
             }
-            finishProcessing(epoch: epoch)
-            dictationLog.info("idle")
+            finish(job)
+            return
+        }
+        history.add(formatted, duration: job.duration, targetBundleID: targetBundleID)
+        entries = history.entries
+        rebuildMenu()
+        dictationLog.notice("history: \(job.label, privacy: .public) saved")
+        deliver(formatted, for: job)
+        finish(job)
+        // A dictation just went through, so the Mac is keeping up again —
+        // a good moment for anything that timed out earlier.
+        if job.pendingItem == nil, !pendingRecordings.items().isEmpty {
+            schedulePendingRetry(after: 5)
+        }
+    }
+
+    /// The text cleanup chain. Pure functions over files and defaults, safe
+    /// to run off the main actor.
+    nonisolated private static func cleanUp(_ raw: String, targetBundleID: String?) -> String {
+        let developerVocabulary = DictationDefaults.developerVocabularyEnabled(
+            forBundleID: targetBundleID)
+        let style = DictationDefaults.style(forBundleID: targetBundleID)
+        dictationLog.info("style resolved: \(style.rawValue, privacy: .public)")
+
+        // Personal-correction stores are English-only by nature:
+        // `LearnedStore` holds mishearing fixes, and `TextFormatter`'s
+        // dictionary holds spellings, both learned from past
+        // *English* dictations. Applied to another language, a short
+        // "heard" trigger (e.g. "up", "there") can exact-word-match a
+        // coincidental token in the transcript and get swapped for
+        // its English "intended" text — corrupting part of an
+        // otherwise-correct non-English sentence (this is what was
+        // silently reintroducing the Latvian-dictation bug even
+        // after Harper below was fixed). Harper has the same problem
+        // for the same reason, just for spelling/grammar instead of
+        // personal corrections.
+        let isEnglishDictation =
+            String(Settings.localeIdentifier.prefix(while: { $0 != "-" }))
+            .lowercased() == "en"
+        dictationLog.info(
+            "locale gate: Settings.localeIdentifier=\(Settings.localeIdentifier, privacy: .public) isEnglishDictation=\(isEnglishDictation)")
+
+        // Tallied for Insights' "Fixes made by Chirp" card only —
+        // each count comes from a plain before/after read of
+        // `formatted` around a call already made below, never from
+        // changing what that call does or re-deriving its result.
+
+        var formatted: String
+        if style.skipsAllProcessing {
+            // Raw: exact words, no cleanup, no AI. For terminals and
+            // code editors, where "corrections" would be corruption.
+            formatted = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            if isEnglishDictation {
+                formatted = LearnedStore.apply(
+                    in: formatted, includeDeveloperVocabulary: developerVocabulary)
+            }
+            formatted = SnippetStore.expand(in: formatted)
+        } else {
+            formatted = TextFormatter(
+                dictionary: isEnglishDictation ? TextFormatter.loadDictionary() : [:]
+            ).format(raw)
+            if isEnglishDictation {
+                formatted = LearnedStore.apply(
+                    in: formatted, includeDeveloperVocabulary: developerVocabulary)
+            }
+            formatted = SnippetStore.expand(in: formatted)
+
+            // Everything below needs the model, and the spoken
+            // trigger must not be stripped out of the text unless
+            // something is actually going to act on it.
+            //
+            // The on-device model rewrite pass that used to run
+            // here (tone styles, note templates, Voice Profile)
+            // is gone along with those three features — Style,
+            // Templates, and Voice Profile were all cut, and
+            // Raw mode (the one thing from that family worth
+            // keeping) never needed the model at all: it's
+            // handled entirely by `style.skipsAllProcessing`
+            // above, before this branch is even reached. What's
+            // left below (formatter, dictionary, learned
+            // corrections, Harper) already covers ordinary
+            // cleanup in ~20ms, against the 7-15s the model pass
+            // measured at — removing it from every dictation's
+            // default path was the whole point of this pass, not
+            // just an option left off.
+
+            // A fast, local, deterministic grammar pass — runs after
+            // the LLM step (catching whatever it missed) but doesn't
+            // depend on it: Harper needs no Apple Intelligence, so
+            // this still improves grammar on Macs where the pass
+            // above was skipped entirely. Milliseconds, not worth a
+            // status message next to a multi-second LLM round-trip.
+            //
+            // English only — see `isEnglishDictation` above: Harper
+            // hardcodes an English parser/dictionary, so it
+            // "corrects" other languages' real words into the
+            // nearest English one instead of leaving them alone.
+            if !formatted.isEmpty, isEnglishDictation {
+                formatted = HarperChecker.fix(
+                    formatted,
+                    vocabulary: LearnedStore.biasTerms(
+                        includeDeveloperVocabulary: developerVocabulary))
+            }
+        }
+        return formatted
+    }
+
+    /// Pastes the result where the user is — unless they have plausibly
+    /// moved on, in which case it goes on the clipboard instead. A late
+    /// paste lands wherever the cursor happens to be by then.
+    private func deliver(_ text: String, for job: DictationJob) {
+        if job.pendingItem != nil {
+            // Never pasted: it's from minutes (or a relaunch) ago.
+            lastError = "Recovered a dictation that had timed out earlier. It's at the top of History."
+            return
+        }
+        guard job.insertResult, job.sleepGeneration == sleepGeneration, !activity.suspendsAmbientWork else {
+            dictationLog.info("history: preserved dictation across sleep; automatic paste skipped")
+            return
+        }
+        let waited = Date().timeIntervalSince(job.stoppedAt)
+        switch PastePolicy.decide(
+            secondsSinceStop: waited,
+            audioSeconds: job.duration ?? 0,
+            frontmostAtStop: job.frontmostAtStop,
+            frontmostNow: NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
+            ownBundleID: Bundle.main.bundleIdentifier
+        ) {
+        case .paste:
+            break
+        case .tooLate(let seconds):
+            dictationLog.notice("paste: \(job.label, privacy: .public) skipped, ready \(seconds) s after stop")
+            copyInsteadOfPasting(text, reason: "That dictation took \(seconds) seconds to come back, "
+                + "so Chirp didn't paste it in case you'd moved on.")
+            return
+        case .appChanged:
+            dictationLog.notice("paste: \(job.label, privacy: .public) skipped, frontmost app changed")
+            copyInsteadOfPasting(text, reason: "You'd switched apps by the time that dictation was ready, "
+                + "so Chirp didn't paste it.")
+            return
+        }
+        if AXIsProcessTrusted() {
+            // Dictating into Chirp's own window (Scratchpad,
+            // Ask, Transforms' try-it box, …) is the one case
+            // where the paste target and the app posting the
+            // synthetic ⌘V are the same process. The HUD panels
+            // are deliberately non-activating so they never
+            // steal focus from *another* app mid-dictation —
+            // but the several-second gap between "recording
+            // stops" and "text is ready" is enough for Chirp
+            // itself to lose active-app status in the interim
+            // (e.g. the user's attention/pointer drifting to
+            // another window), which the other-app path never
+            // had to survive since it was never Chirp's status
+            // to lose. Reactivating right before the paste
+            // restores it without touching the window's own
+            // first responder, which AppKit preserves across an
+            // app losing and regaining active status.
+            if job.targetBundleID == Bundle.main.bundleIdentifier {
+                NSApp.activate(ignoringOtherApps: true)
+            }
+            TextInserter.insert(text)
+        } else {
+            // Can't synthesize ⌘V without Accessibility — never
+            // fail silently: leave the transcript on the clipboard.
+            copyInsteadOfPasting(text, reason: "Accessibility isn't active for this build, "
+                + "so the text wasn't pasted. Fix this in Settings.")
+        }
+    }
+
+    private func copyInsteadOfPasting(_ text: String, reason: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+        lastError = reason + " It's on your clipboard: press ⌘V to paste it."
+        NSSound(named: "Basso")?.play()
+    }
+
+    private func finish(_ job: DictationJob) {
+        if let epoch = job.epoch { finishProcessing(epoch: epoch) }
+        dictationLog.info("idle")
+    }
+
+    // MARK: - Recordings kept for a retry
+
+    private func discardAudio(of job: DictationJob) {
+        if let item = job.pendingItem {
+            pendingRecordings.remove(id: item.id)
+            retryingPendingIDs.remove(item.id)
+        } else {
+            try? FileManager.default.removeItem(at: job.url)
+        }
+    }
+
+    /// A failed or timed-out dictation keeps its audio. The old behaviour
+    /// deleted it with the task, so a stuck recognizer meant the words were
+    /// gone for good.
+    private func keepForRetry(_ job: DictationJob, after error: Error) {
+        let timedOut = error is DeadlineError
+        Diagnostics.shared.snapshot(timedOut ? "timeout" : "failure")
+        dictationLog.error(
+            "recognize: \(job.label, privacy: .public) \(timedOut ? "timed out" : "failed", privacy: .public): \(error.localizedDescription, privacy: .public)")
+        if var item = job.pendingItem {
+            retryingPendingIDs.remove(item.id)
+            item.attempts += 1
+            if item.attempts > PendingRecordingStore.maxAttempts {
+                pendingRecordings.remove(id: item.id)
+                dictationLog.error("pending: gave up on \(item.id, privacy: .public) after \(item.attempts - 1) retries")
+                lastError = "Chirp couldn't transcribe a saved dictation after "
+                    + "\(PendingRecordingStore.maxAttempts) more tries, so it was discarded."
+            } else {
+                try? pendingRecordings.write(item)
+                schedulePendingRetry(after: 300)
+            }
+            return
+        }
+        if pendingRecordings.keep(audio: job.url, duration: job.duration, targetBundleID: job.targetBundleID) != nil {
+            dictationLog.notice("pending: \(job.label, privacy: .public) kept for retry")
+            lastError = (timedOut
+                ? "Transcription took too long. Your Mac may be busy."
+                : "Transcription failed: \(error.localizedDescription).")
+                + " The recording is saved and Chirp will try it again shortly."
+            schedulePendingRetry(after: 120)
+        } else {
+            try? FileManager.default.removeItem(at: job.url)
+            lastError = "Transcription failed: \(error.localizedDescription)"
+        }
+        NSSound(named: "Basso")?.play()
+    }
+
+    private func schedulePendingRetry(after seconds: Double) {
+        pendingRetryTask?.cancel()
+        pendingRetryTask = Task {
+            try? await Task.sleep(for: .seconds(seconds))
+            guard !Task.isCancelled else { return }
+            self.retryPendingRecordings()
+        }
+    }
+
+    /// Queues every saved recording that isn't already queued. Only while
+    /// idle, so a retry never makes a fresh dictation wait behind it.
+    private func retryPendingRecordings() {
+        let items = pendingRecordings.items().filter { !retryingPendingIDs.contains($0.id) }
+        guard !items.isEmpty else { return }
+        guard uiState == .idle, queuedTranscriptions == 0, !activity.suspendsAmbientWork else {
+            schedulePendingRetry(after: 60)
+            return
+        }
+        dictationLog.notice("pending: retrying \(items.count) saved recording(s)")
+        for item in items {
+            retryingPendingIDs.insert(item.id)
+            enqueueTranscription(DictationJob(
+                url: pendingRecordings.audioURL(for: item.id),
+                epoch: nil,
+                sleepGeneration: sleepGeneration,
+                insertResult: false,
+                duration: item.duration,
+                stoppedAt: item.createdAt,
+                targetBundleID: item.targetBundleID,
+                frontmostAtStop: nil,
+                pendingItem: item))
         }
     }
 

@@ -89,15 +89,6 @@ final class StatusHUDController {
     // Wide enough for the longest status label ("Listening — hands-free")
     // to sit comfortably next to a full-width waveform without crowding.
     private static let size = NSSize(width: 320, height: 58)
-    /// With live text. Grown only when words actually exist — the
-    /// previous attempt at this grew on `recording` regardless, so a
-    /// short dictation showed an empty panel that never filled, which is
-    /// most of why it was removed (see `StatusHUDView`'s own note).
-    private static let liveSize = NSSize(width: 420, height: 132)
-
-    private var currentSize: NSSize {
-        model.liveText.isEmpty ? Self.size : Self.liveSize
-    }
 
     func update(_ state: HUDState) {
         guard state != .hidden else {
@@ -105,17 +96,6 @@ final class StatusHUDController {
             return
         }
         if model.state != state { model.state = state }
-        show()
-    }
-
-    /// Streams the live preview in. Resizes only when crossing between
-    /// "no text" and "some text", not on every token — repositioning the
-    /// panel per word would make it visibly twitch while you speak.
-    func setLiveText(_ text: String) {
-        let wasEmpty = model.liveText.isEmpty
-        guard model.liveText != text else { return }
-        model.liveText = text
-        guard model.state != .hidden, wasEmpty != text.isEmpty, panel != nil else { return }
         show()
     }
 
@@ -130,7 +110,7 @@ final class StatusHUDController {
 
     private func show() {
         let panel = existingOrNewPanel()
-        let size = currentSize
+        let size = Self.size
         panel.setFrame(
             NSRect(origin: HUDDock.origin(for: size), size: size),
             display: true, animate: false)
@@ -147,16 +127,14 @@ final class StatusHUDController {
         if model.state != .hidden { model.state = .hidden }
         panel?.orderOut(nil)
         model.targetAppIcon = nil
-        model.liveText = ""
     }
 
     static func runSelfTest() -> Bool {
         // No panel or microphone is opened by this state regression.
         let controller = StatusHUDController()
         controller.model.state = .recording(handsFree: false)
-        controller.model.liveText = "Fixture"
         controller.hide()
-        let recordingHidden = controller.model.state == .hidden && controller.model.liveText.isEmpty
+        let recordingHidden = controller.model.state == .hidden
         controller.model.state = .processing("Fixture")
         controller.hide()
         let processingHidden = controller.model.state == .hidden
@@ -169,7 +147,7 @@ final class StatusHUDController {
         if let panel { return panel }
 
         let hosting = NSHostingView(rootView: StatusHUDView(model: model))
-        hosting.frame = NSRect(origin: .zero, size: Self.liveSize)
+        hosting.frame = NSRect(origin: .zero, size: Self.size)
 
         let newPanel = NSPanel(
             contentRect: hosting.frame,
@@ -205,10 +183,6 @@ final class StatusHUDController {
 @MainActor
 private final class HUDModel: ObservableObject {
     @Published var state: HUDState = .hidden
-    /// The live preview, streamed in while recording. Empty whenever
-    /// there's nothing yet — the HUD stays its compact self until real
-    /// words exist, so a short dictation never shows an empty box.
-    @Published var liveText = ""
     /// The target app's own icon — see `StatusHUDController.setTargetAppIcon`.
     @Published var targetAppIcon: NSImage?
 }
@@ -225,37 +199,17 @@ private final class HUDModel: ObservableObject {
 /// building it. The waveform below already answers the one question a live
 /// preview was trying to: "is it actually hearing me" — without ever being
 /// able to look *wrong*.
+///
+/// It was later added back (streaming the live preview in as a dim italic
+/// draft) and removed again for the same reason: in daily use it "usually
+/// shows the wrong text". Live preview now appears only in the wren's
+/// bubble, for dictations started from its mic button.
 private struct StatusHUDView: View {
     @ObservedObject var model: HUDModel
 
     var body: some View {
         if model.state != .hidden {
-            VStack(alignment: .leading, spacing: 10) {
-                if !model.liveText.isEmpty {
-                    // Tail-anchored: as the preview grows past the visible
-                    // lines you want the newest words, not the oldest. A
-                    // top-anchored box would scroll your own speech out of
-                    // sight the moment it overflowed.
-                    // Styled as visibly provisional — dimmer and italic —
-                    // because it is. This is a different, faster model than
-                    // the one that produces the real transcript, and it has
-                    // had none of the cleanup (punctuation, capitalisation,
-                    // filler removal, dictionary, snippets) applied. Set it
-                    // like finished text and every difference reads as "it
-                    // got that wrong" a second before the correct words
-                    // appear; set it like a draft and the same differences
-                    // read as "it's still thinking", which is the truth.
-                    Text(model.liveText)
-                        .font(.manrope(13).italic())
-                        .foregroundStyle(.white.opacity(0.62))
-                        .lineSpacing(3)
-                        .lineLimit(3)
-                        .truncationMode(.head)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                statusRow
-            }
+            statusRow
             .padding(.horizontal, 18)
             .padding(.vertical, 14)
             .background(hudShape.fill(Palette.navActivePill))
@@ -289,14 +243,9 @@ private struct StatusHUDView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
     }
 
-    // A capsule, always — with no more taller "expanded" card state to
-    // distinguish from, this is back to being a single fixed-height pill
-    // in every way that matters, the same as before the live-transcript
-    // feature (and its own two-shape `hudShape`) existed.
+    // A capsule, always: a single fixed-height pill.
     private var hudShape: RoundedRectangle {
-        RoundedRectangle(
-            cornerRadius: model.liveText.isEmpty ? Self.dockedCornerRadius : 20,
-            style: .continuous)
+        RoundedRectangle(cornerRadius: Self.dockedCornerRadius, style: .continuous)
     }
 
     private static let dockedCornerRadius: CGFloat = 25

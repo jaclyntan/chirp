@@ -82,10 +82,22 @@ final class HistoryStore {
         save()
     }
 
+    /// Writes happen off the main thread: on a Mac deep in swap, disk I/O
+    /// can block for seconds, and this runs at the end of every dictation.
+    /// Serial, so writes land in order, and atomic, so a write cut short
+    /// never leaves a truncated file.
+    private static let writeQueue = DispatchQueue(label: "local.chirp.history-write", qos: .utility)
+
     private func save() {
-        if let data = try? JSONEncoder().encode(entries) {
-            try? data.write(to: fileURL, options: .atomic)
-        }
+        guard let data = try? JSONEncoder().encode(entries) else { return }
+        let url = fileURL
+        Self.writeQueue.async { try? data.write(to: url, options: .atomic) }
+    }
+
+    /// Blocks until every queued write has landed. Must run before the
+    /// process exits — `applicationShouldTerminate` ends it with `_exit`.
+    static func flushPendingWrites() {
+        writeQueue.sync {}
     }
 
     /// Case-insensitive substring match, shared by Home's search field and

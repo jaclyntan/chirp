@@ -10,11 +10,16 @@ final class RuntimeActivity {
     private(set) var displaySleeping = false
     private(set) var sessionInactive = false
     private(set) var reducesMotion = false
+    /// macOS reports memory pressure (warning or critical). Optional
+    /// models should give their memory back while this is true.
+    private(set) var memoryConstrained = false
     var suspendsAmbientWork: Bool { systemSleeping || displaySleeping || sessionInactive }
 
     @ObservationIgnored var onSleep: (() -> Void)?
     @ObservationIgnored var onWake: (() -> Void)?
     @ObservationIgnored var onAmbientChange: ((Bool) -> Void)?
+    @ObservationIgnored var onMemoryPressureChange: ((Bool) -> Void)?
+    @ObservationIgnored private var memoryPressureSource: DispatchSourceMemoryPressure?
     @ObservationIgnored private var observers: [(NotificationCenter, NSObjectProtocol)] = []
     @ObservationIgnored private var waiters: [CheckedContinuation<Void, Never>] = []
 
@@ -30,6 +35,28 @@ final class RuntimeActivity {
         observe(.default, .NSProcessInfoPowerStateDidChange) { $0.refreshPowerPolicy() }
         observe(.default, ProcessInfo.thermalStateDidChangeNotification) { $0.refreshPowerPolicy() }
         refreshPowerPolicy()
+        startMemoryPressureWatch()
+    }
+
+    /// Event-driven like everything else here: the kernel delivers a
+    /// pressure change; nothing polls.
+    private func startMemoryPressureWatch() {
+        let source = DispatchSource.makeMemoryPressureSource(
+            eventMask: [.normal, .warning, .critical], queue: .main)
+        source.setEventHandler { [weak self, weak source] in
+            guard let event = source?.data else { return }
+            MainActor.assumeIsolated {
+                self?.setMemoryConstrained(event.contains(.warning) || event.contains(.critical))
+            }
+        }
+        source.resume()
+        memoryPressureSource = source
+    }
+
+    func setMemoryConstrained(_ value: Bool) {
+        guard memoryConstrained != value else { return }
+        memoryConstrained = value
+        onMemoryPressureChange?(value)
     }
 
     private func observe(_ center: NotificationCenter, _ name: Notification.Name,
@@ -45,6 +72,8 @@ final class RuntimeActivity {
     func stop() {
         for (center, observer) in observers { center.removeObserver(observer) }
         observers.removeAll()
+        memoryPressureSource?.cancel()
+        memoryPressureSource = nil
     }
 
     private func refreshPowerPolicy() {
@@ -128,6 +157,12 @@ final class RuntimeActivity {
         check(activity.reducesMotion, "thermal pressure suspends ambient motion")
         activity.updatePowerPolicy(lowPower: false, thermal: .nominal)
         check(!activity.reducesMotion, "ambient motion returns after power and thermal pressure clear")
+        var pressureChanges: [Bool] = []
+        activity.onMemoryPressureChange = { pressureChanges.append($0) }
+        activity.setMemoryConstrained(true)
+        activity.setMemoryConstrained(true)
+        activity.setMemoryConstrained(false)
+        check(pressureChanges == [true, false], "memory pressure reports each change once")
         return passed
     }
 }
